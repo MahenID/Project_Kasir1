@@ -1,0 +1,624 @@
+openapi: 3.1.0
+info:
+  title: DragonMart POS API — Phase 2 Core Architecture Contract
+  version: 2.0.0
+  description: >
+    API Contract for DragonMart POS Phase 2 Core Architecture.
+    Includes Sanctum SPA Authentication, Shift & Cash Reconciliation,
+    Checkout Server Quotes, Stock Concurrency, and Durable Idempotency Recovery.
+servers:
+  - url: http://localhost:8000
+    description: Direct Backend Server
+  - url: http://localhost:3000
+    description: Frontend Reverse Proxy Origin
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check endpoint
+      tags: [System]
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+
+  /api/v1/auth/login:
+    post:
+      summary: Login via session cookies
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                remember:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Successfully authenticated. Session cookie set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponseEnvelope'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Account is deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Rate limit exceeded (5 attempts per minute per email+IP)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/auth/logout:
+    post:
+      summary: Invalidate session and logout
+      tags: [Auth]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+
+  /api/v1/auth/me:
+    get:
+      summary: Get current authenticated user profile, roles, and open shift
+      tags: [Auth]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponseEnvelope'
+
+  /api/v1/auth/profile:
+    put:
+      summary: Update own user profile
+      tags: [Auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                phone:
+                  type: string
+                  maxLength: 25
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponseEnvelope'
+
+  /api/v1/auth/password:
+    put:
+      summary: Update password (requires current password)
+      tags: [Auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password, password_confirmation]
+              properties:
+                current_password:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                password_confirmation:
+                  type: string
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+
+  /api/v1/shifts/open:
+    post:
+      summary: Open a new cashier shift
+      tags: [Shifts]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [terminal_id, starting_cash]
+              properties:
+                terminal_id:
+                  type: integer
+                starting_cash:
+                  type: integer
+                  minimum: 0
+                  description: Integer rupiah starting float cash
+                notes:
+                  type: string
+      responses:
+        '201':
+          description: Shift opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShiftResponseEnvelope'
+        '409':
+          description: Shift already open or terminal in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/shifts/current:
+    get:
+      summary: Get authenticated user's current open shift and live X-report preview
+      tags: [Shifts]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current open shift and X-report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentShiftResponseEnvelope'
+
+  /api/v1/shifts/close:
+    post:
+      summary: Close current shift and record immutable Z-report
+      tags: [Shifts]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actual_cash]
+              properties:
+                actual_cash:
+                  type: integer
+                  minimum: 0
+                explanation:
+                  type: string
+                  description: Mandatory if actual_cash differs from expected_cash
+      responses:
+        '200':
+          description: Shift closed and Z-report produced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClosedShiftResponseEnvelope'
+        '422':
+          description: Explanation required for cash discrepancy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/shifts/{id}/cash-movements:
+    post:
+      summary: Record cash in or cash out on an open shift
+      tags: [Shifts]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, amount, reason]
+              properties:
+                type:
+                  type: string
+                  enum: [in, out, cash_in, cash_out]
+                amount:
+                  type: integer
+                  minimum: 1
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Cash movement recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '422':
+          description: Cash out exceeds expected drawer cash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/checkout/quotes:
+    post:
+      summary: Calculate server quote for cart items (valid 120s, reserves no stock)
+      tags: [POS & Quotes]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [product_id, quantity]
+                    properties:
+                      product_id:
+                        type: integer
+                      quantity:
+                        type: integer
+                        minimum: 1
+                        maximum: 10000
+                      discount_type:
+                        type: string
+                        enum: [percent, fixed]
+                      discount_value:
+                        type: integer
+                        minimum: 0
+                        description: Basis points if percent (100 = 1%), or integer rupiah if fixed
+                sale_discount_type:
+                  type: string
+                  enum: [percent, fixed]
+                sale_discount_value:
+                  type: integer
+                  minimum: 0
+                customer_id:
+                  type: integer
+      responses:
+        '201':
+          description: Quote calculated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponseEnvelope'
+        '409':
+          description: User has no open shift or inventory is frozen
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Cashier discount limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/checkout/recovery/{key}:
+    get:
+      summary: Recover outcome of a checkout idempotency key after unknown response
+      tags: [POS & Quotes]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recovery status lookup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryResponseEnvelope'
+
+  /api/v1/operations/{operation}/{key}:
+    get:
+      summary: Generic recovery lookup for any permitted operation key
+      tags: [System]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: operation
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recovery status lookup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryResponseEnvelope'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: laravel-session
+
+  schemas:
+    MetaEnvelope:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+
+    SuccessEnvelope:
+      type: object
+      required: [success, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          nullable: true
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message, fields]
+          properties:
+            code:
+              type: string
+              example: INSUFFICIENT_STOCK
+            message:
+              type: string
+            fields:
+              type: object
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    UserResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            email:
+              type: string
+            roles:
+              type: array
+              items:
+                type: string
+            permissions:
+              type: array
+              items:
+                type: string
+            current_shift:
+              type: object
+              nullable: true
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ShiftResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            shift:
+              type: object
+              properties:
+                id:
+                  type: integer
+                shift_number:
+                  type: string
+                status:
+                  type: string
+                  example: open
+                starting_cash:
+                  type: integer
+                opened_at:
+                  type: string
+                  format: date-time
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    CurrentShiftResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            shift:
+              type: object
+            x_report:
+              type: object
+              properties:
+                starting_cash:
+                  type: integer
+                cash_sales_applied:
+                  type: integer
+                cash_refunds:
+                  type: integer
+                cash_in:
+                  type: integer
+                cash_out:
+                  type: integer
+                expected_cash:
+                  type: integer
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ClosedShiftResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            shift:
+              type: object
+            z_report:
+              type: object
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    QuoteResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            quote_id:
+              type: string
+              format: uuid
+            expires_at:
+              type: string
+              format: date-time
+            expires_in_seconds:
+              type: integer
+              example: 120
+            calculation:
+              type: object
+              properties:
+                gross_total:
+                  type: integer
+                item_discount_total:
+                  type: integer
+                base_total:
+                  type: integer
+                sale_discount_total:
+                  type: integer
+                net_total:
+                  type: integer
+                tax_total:
+                  type: integer
+                grand_total:
+                  type: integer
+                items:
+                  type: array
+                  items:
+                    type: object
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    RecoveryResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [absent, pending, succeeded, failed]
+            operation:
+              type: string
+            key:
+              type: string
+            result:
+              type: object
+              nullable: true
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
