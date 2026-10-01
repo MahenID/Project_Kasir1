@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Environment files
+.env
+.env.backup
+.env.production
+*.env
+
+# Next.js build
+.next/
+out/
+build/
+dist/
+
+# Logs & caches
+*.log
+.npm
+.eslintcache
+
+# Laravel storage & cache
+backend/storage/*.key
+backend/storage/framework/cache/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/bootstrap/cache/*
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
