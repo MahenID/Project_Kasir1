@@ -15,136 +15,136 @@ To update antislop later: `npx antislop-ai --update`, or run `npx antislop-ai` a
 
 # PROJECT DEVELOPMENT RULES & WORKFLOW GUIDELINES
 
-Project Sistem Kasir (Point of Sale) modern dengan arsitektur terpisah antara Backend (Laravel) dan Frontend (Next.js).
+A modern Point of Sale (POS) project with separate backend (Laravel) and frontend (Next.js) architectures.
 
 ---
 
 ## 1. GIT BRANCHING STRATEGY & WORKSPACE RULES
 
-Project ini menggunakan strategi Git branching terstruktur untuk menjaga stabilitas kode:
+This project uses a structured Git branching strategy to maintain code stability:
 
 ### Branch Structure
 1. **`main`** (PRODUCTION - STRICTLY PROTECTED):
-   - **DILARANG KERAS** menyentuh, commit, merge, atau push langsung ke branch `main`.
-   - Branch `main` **HANYA BOLEH disentuh** jika ada instruksi eksplisit langsung dari user (contoh: "push ke main" atau "merge ke main").
+   - Working on, committing to, merging into, or pushing directly to the `main` branch is **STRICTLY PROHIBITED**.
+   - The `main` branch **MAY ONLY be modified** following an explicit, direct instruction from the user (for example, "push to main" or "merge into main").
 2. **`development`** (MAIN INTEGRATION BRANCH):
-   - Branch utama tempat penggabungan seluruh fitur dan fase yang telah selesai.
-   - Semua perubahan dari `fase/backend` dan `fase/frontend` wajib di-merge ke branch ini setelah lolos uji dan di-push ke branch fasenya masing-masing.
+   - The main branch for integrating all completed features and phases.
+   - All changes from `fase/backend` and `fase/frontend` must be merged into this branch after passing tests and being pushed to their respective phase branches.
 3. **`fase/backend`** (BACKEND WORKSPACE):
-   - Ruang kerja khusus untuk pengerjaan, perbaikan (fix), revisi, penambahan modul/fitur pada sisi Backend (Laravel).
+   - A dedicated workspace for implementation, fixes, revisions, and new modules or features on the backend (Laravel).
 4. **`fase/frontend`** (FRONTEND WORKSPACE):
-   - Ruang kerja khusus untuk pengerjaan, perbaikan (fix), revisi, perubahan UI/UX, styling, komponen pada sisi Frontend (Next.js).
+   - A dedicated workspace for implementation, fixes, revisions, UI/UX changes, styling, and components on the frontend (Next.js).
 
 ---
 
-## 2. PROTOKOL EKSEKUSI TUGAS (DEVELOPMENT WORKFLOW)
+## 2. TASK EXECUTION PROTOCOL (DEVELOPMENT WORKFLOW)
 
-Setiap kali menerima perintah perbaikan, revisi, atau implementasi kode dari user:
+Whenever the user requests a fix, revision, or code implementation:
 
-### A. Protokol Pengerjaan Backend
-1. **Beralih ke Workspace Backend**: Checkout ke branch `fase/backend` (`git checkout fase/backend`).
-2. **Implementasi & Perbaikan**: Kerjakan kode sesuai fase arsitektur backend yang dituju.
-3. **Commit & Push ke Fase**:
-   - Stage & commit perubahan dengan pesan yang jelas.
-   - Push langsung ke branch `fase/backend`:
+### A. Backend Development Protocol
+1. **Switch to the Backend Workspace**: Check out the `fase/backend` branch (`git checkout fase/backend`).
+2. **Implementation & Fixes**: Implement the code according to the relevant backend architecture phase.
+3. **Commit & Push to the Phase Branch**:
+   - Stage and commit the changes with a clear commit message.
+   - Push directly to the `fase/backend` branch:
      ```bash
      git push origin fase/backend
      ```
-4. **Merge ke Branch Development**:
-   - Beralih ke branch `development` (`git checkout development`).
-   - Merge perubahan dari `fase/backend`:
+4. **Merge into the Development Branch**:
+   - Switch to the `development` branch (`git checkout development`).
+   - Merge the changes from `fase/backend`:
      ```bash
      git merge fase/backend
      git push origin development
      ```
-5. **Kembali ke Workspace**: Kembali ke branch pengerjaan (`git checkout fase/backend`).
-6. **Strict Protection**: Dilarang menyentuh / merge ke `main`!
+5. **Return to the Workspace**: Return to the working branch (`git checkout fase/backend`).
+6. **Strict Protection**: Do not modify or merge into `main`!
 
-### B. Protokol Pengerjaan Frontend
-1. **Beralih ke Workspace Frontend**: Checkout ke branch `fase/frontend` (`git checkout fase/frontend`).
-2. **Implementasi & Perbaikan**: Kerjakan kode sesuai fase arsitektur frontend yang dituju.
-3. **Commit & Push ke Fase**:
-   - Stage & commit perubahan dengan pesan yang jelas.
-   - Push langsung ke branch `fase/frontend`:
+### B. Frontend Development Protocol
+1. **Switch to the Frontend Workspace**: Check out the `fase/frontend` branch (`git checkout fase/frontend`).
+2. **Implementation & Fixes**: Implement the code according to the relevant frontend architecture phase.
+3. **Commit & Push to the Phase Branch**:
+   - Stage and commit the changes with a clear commit message.
+   - Push directly to the `fase/frontend` branch:
      ```bash
      git push origin fase/frontend
      ```
-4. **Merge ke Branch Development**:
-   - Beralih ke branch `development` (`git checkout development`).
-   - Merge perubahan dari `fase/frontend`:
+4. **Merge into the Development Branch**:
+   - Switch to the `development` branch (`git checkout development`).
+   - Merge the changes from `fase/frontend`:
      ```bash
      git merge fase/frontend
      git push origin development
      ```
-5. **Kembali ke Workspace**: Kembali ke branch pengerjaan (`git checkout fase/frontend`).
-6. **Strict Protection**: Dilarang menyentuh / merge ke `main`!
+5. **Return to the Workspace**: Return to the working branch (`git checkout fase/frontend`).
+6. **Strict Protection**: Do not modify or merge into `main`!
 
 ---
 
-## 3. ALUR PEMBUATAN BACKEND LARAVEL (5 FASE)
-*Dari Migration hingga Production Ready*
+## 3. LARAVEL BACKEND DEVELOPMENT WORKFLOW (5 PHASES)
+*From Migrations to Production Readiness*
 
-### FASE 1 – DATABASE
-- **01. Migrations**: Perancangan skema database terstruktur, index kunci, dan integritas data relasional.
-- **02. Models & Relations**: Pembuatan Eloquent Models, pendefinisian casts, timestamps, dan relasi antar tabel (HasMany, BelongsTo, BelongsToMany, dll).
-- **03. Factories**: Penyediaan model factories untuk mock data dan otomatisasi data dummy testing.
-- **04. Seeders**: Pengisian data awal sistem (master roles, akun admin, data kategori barang default).
+### PHASE 1 – DATABASE
+- **01. Migrations**: Design a structured database schema, key indexes, and relational data integrity constraints.
+- **02. Models & Relations**: Create Eloquent models and define casts, timestamps, and relationships between tables (HasMany, BelongsTo, BelongsToMany, etc.).
+- **03. Factories**: Provide model factories for mock data and automated test data generation.
+- **04. Seeders**: Populate initial system data (predefined roles, administrator accounts, and default product categories).
 
-### FASE 2 – CORE APPLICATION
-- **05. Repository Layer**: Abstraksi data layer untuk pemisahan query database dari business logic.
-- **06. Service Layer**: Pusat penanganan logika bisnis aplikasi (kalkulasi transaksi, manajemen inventory stok, promo/diskon).
-- **07. Form Requests**: Validasi request terisolasi (aturan validasi, kustomisasi pesan error, dan izin request).
-- **08. Policies & Permissions**: Pengaturan izin akses aksi data (RBAC - Role-Based Access Control) via Laravel Gate & Policy.
+### PHASE 2 – CORE APPLICATION
+- **05. Repository Layer**: Abstract the data layer to separate database queries from business logic.
+- **06. Service Layer**: Centralize application business logic (transaction calculations, stock inventory management, and promotions/discounts).
+- **07. Form Requests**: Isolate request validation (validation rules, custom error messages, and request authorization).
+- **08. Policies & Permissions**: Define access permissions for data operations (RBAC - Role-Based Access Control) through Laravel gates and policies.
 
-### FASE 3 – REST API
-- **09. Controllers**: Thin controllers yang bertindak sebagai penghubung HTTP request menuju Service Layer.
-- **10. API Resources**: Transformasi respon data JSON yang konsisten, aman, dan efisien.
-- **11. Routes & Middleware**: Definisi rute API (`routes/api.php`), API versioning, rate limiting, dan middleware pipeline.
-- **12. Authentication**: Implementasi sistem otentikasi token yang aman (Laravel Sanctum).
+### PHASE 3 – REST API
+- **09. Controllers**: Use thin controllers to connect HTTP requests to the Service Layer.
+- **10. API Resources**: Transform JSON data responses consistently, securely, and efficiently.
+- **11. Routes & Middleware**: Define API routes (`routes/api.php`), API versioning, rate limiting, and the middleware pipeline.
+- **12. Authentication**: Implement secure token authentication with Laravel Sanctum.
 
-### FASE 4 – INTEGRATION
-- **13. Spatie Media Library**: Penanganan berkas upload (gambar produk, bukti struk, profil).
-- **14. Spatie Activitylog**: Pencatatan riwayat audit transaksi, perubahan data penting, dan log aktivitas user.
-- **15. Redis & Queue**: Caching performa tinggi dan pengelolaan asynchronous background jobs (antrean cetak, rekap laporan).
-- **16. Events & Notifications**: Event-driven architecture untuk broadcast data transaksi real-time dan notifikasi.
+### PHASE 4 – INTEGRATION
+- **13. Spatie Media Library**: Handle uploaded files (product images, receipt documents, and profile media).
+- **14. Spatie Activitylog**: Record transaction audit trails, important data changes, and user activity logs.
+- **15. Redis & Queue**: Implement high-performance caching and asynchronous background jobs (print queues and report summaries).
+- **16. Events & Notifications**: Use an event-driven architecture to broadcast real-time transaction data and send notifications.
 
-### FASE 5 – QUALITY & RELEASE
-- **17. Tests & API Docs**: Automated feature & unit testing, serta dokumentasi endpoint API lengkap.
-- **18. Deployment & Monitoring**: Konfigurasi server production, caching optimasi Laravel, monitoring log dan error.
+### PHASE 5 – QUALITY & RELEASE
+- **17. Tests & API Docs**: Implement automated feature and unit tests, and provide complete API endpoint documentation.
+- **18. Deployment & Monitoring**: Configure production servers, optimize Laravel caching, and monitor logs and errors.
 - **-> PRODUCTION READY**
 
 ---
 
-## 4. ALUR PEMBUATAN FRONTEND NEXT.JS (5 FASE)
-*Dari Setup Project hingga Production Ready*
+## 4. NEXT.JS FRONTEND DEVELOPMENT WORKFLOW (5 PHASES)
+*From Project Setup to Production Readiness*
 
-### FASE 1 – FOUNDATION
-- **01. Create Next.js App**: Fondasi arsitektur Next.js berbasis App Router.
-- **02. Project Structure**: Tata letak folder rapi (`app/`, `components/`, `lib/`, `hooks/`, `types/`, `services/`).
-- **03. Environment Config**: Konfigurasi variabel lingkungan aman (`NEXT_PUBLIC_API_URL`, dll).
-- **04. Styles & UI**: Setup tema visual, utility styling, tipografi modern, dan desain sistem antarmuka kasir.
+### PHASE 1 – FOUNDATION
+- **01. Create Next.js App**: Establish the Next.js architecture using the App Router.
+- **02. Project Structure**: Organize folders clearly (`app/`, `components/`, `lib/`, `hooks/`, `types/`, `services/`).
+- **03. Environment Config**: Configure environment variables securely (`NEXT_PUBLIC_API_URL`, etc.).
+- **04. Styles & UI**: Set up the visual theme, utility styling, modern typography, and the POS interface design system.
 
-### FASE 2 – CORE ARCHITECTURE
-- **05. Types & Utils**: Interface dan tipe TypeScript yang ketat untuk seluruh domain data (Produk, Transaksi, User) serta fungsi utility.
-- **06. API Client**: HTTP Client terpusat (Fetch/Axios wrapper) dengan token interceptor dan centralized error handling.
-- **07. Auth Service**: Manajemen session login, penyimpanan aman token akses, auto-refresh token, dan logout.
-- **08. Proxy & Route Guard**: Middleware proteksi halaman privat dan pengalihan hak akses sesuai peran (Admin vs Kasir).
+### PHASE 2 – CORE ARCHITECTURE
+- **05. Types & Utils**: Define strict TypeScript interfaces and types for all data domains (Products, Transactions, Users), along with utility functions.
+- **06. API Client**: Create a centralized HTTP client (Fetch/Axios wrapper) with a token interceptor and centralized error handling.
+- **07. Auth Service**: Manage login sessions, secure access token storage, automatic token refresh, and logout.
+- **08. Proxy & Route Guard**: Protect private pages through middleware and route users according to their roles (Admin vs. Cashier).
 
-### FASE 3 – UI DEVELOPMENT
-- **09. Root Layout**: Struktur layout induk aplikasi (Sidebar POS, Header kasir, Status bar kasir).
-- **10. Shared Components**: Koleksi komponen UI reusable (Button, Input, Modal, Badge, Dropdown, Table).
-- **11. Pages & Server Components**: Halaman server-rendered untuk efisiensi loading awal data.
-- **12. Client Components**: Komponen interaktif transaksi (katalog barang instan, kalkulator bayar/kembalian, shopping cart).
+### PHASE 3 – UI DEVELOPMENT
+- **09. Root Layout**: Define the application's root layout (POS sidebar, cashier header, and cashier status bar).
+- **10. Shared Components**: Build a collection of reusable UI components (Button, Input, Modal, Badge, Dropdown, Table).
+- **11. Pages & Server Components**: Create server-rendered pages for efficient initial data loading.
+- **12. Client Components**: Build interactive transaction components (instant product catalog, payment/change calculator, and shopping cart).
 
-### FASE 4 – FEATURE INTEGRATION
-- **13. Forms & Validation**: Form checkout, input produk baru, dan validasi schema client-side.
-- **14. Feature Services**: Abstraksi pemanggilan API per modul fitur kasir.
-- **15. Hooks & State**: Custom React hooks untuk manajemen keranjang belanja kasir dan state transaksi aktif.
-- **16. Role & Permission UI**: Tampilan antarmuka yang adaptif sesuai kewenangan pengguna.
+### PHASE 4 – FEATURE INTEGRATION
+- **13. Forms & Validation**: Build checkout and new product forms with client-side schema validation.
+- **14. Feature Services**: Abstract API calls for each POS feature module.
+- **15. Hooks & State**: Create custom React hooks to manage the cashier's shopping cart and active transaction state.
+- **16. Role & Permission UI**: Adapt the interface to each user's permissions.
 
-### FASE 5 – QUALITY & RELEASE
-- **17. Media Upload**: Antarmuka upload media gambar barang dengan preview visual instan.
-- **18. Loading, Error & Cache**: Penanganan status loading elegan (skeletons), error boundary, dan strategi caching client.
-- **19. Tests & Production Build**: Pengujian fungsionalitas komponen dan validasi build produksi bersih (`npm run build`).
-- **20. Deployment & Monitoring**: Konfigurasi deployment, optimasi bundle, dan pemantauan performa Web Vitals.
+### PHASE 5 – QUALITY & RELEASE
+- **17. Media Upload**: Build a product image upload interface with instant visual previews.
+- **18. Loading, Error & Cache**: Handle loading states with skeletons, error boundaries, and client-side caching strategies.
+- **19. Tests & Production Build**: Test component functionality and verify a clean production build (`npm run build`).
+- **20. Deployment & Monitoring**: Configure deployment, optimize bundles, and monitor Web Vitals performance.
 - **-> PRODUCTION READY**
