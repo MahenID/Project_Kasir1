@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CheckoutQuoteController;
 use App\Http\Controllers\Api\OperationRecoveryController;
+use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
 use App\Support\ApiResponse;
 use Illuminate\Support\Facades\Route;
@@ -46,6 +47,14 @@ Route::prefix('v1')->group(function () {
         Route::prefix('checkout')->group(function () {
             Route::post('/quotes', [CheckoutQuoteController::class, 'store']);
             Route::get('/recovery/{key}', [OperationRecoveryController::class, 'recoverCheckout']);
+        });
+
+        // Sales (Phase 3 — First Complete Sale)
+        Route::prefix('sales')->group(function () {
+            Route::post('/', [SaleController::class, 'store']);
+            Route::get('/', [SaleController::class, 'index']);
+            Route::get('/{sale}', [SaleController::class, 'show'])->whereNumber('sale');
+            Route::get('/{sale}/receipt', [SaleController::class, 'receipt'])->whereNumber('sale');
         });
 
         // Operation Key Recovery
