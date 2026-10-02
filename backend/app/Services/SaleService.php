@@ -114,7 +114,9 @@ class SaleService
             }
 
             // 3. Verify the cashier still has the same open shift.
-            $shift = $user->currentOpenShift;
+            //    Query fresh (not the cached relation) so a shift closed/re-opened
+            //    since the quote was minted is detected correctly.
+            $shift = $user->currentOpenShift()->first();
             if (!$shift || (int) $shift->id !== (int) $quote->shift_id) {
                 throw new DomainException(
                     'Shift kasir telah berubah sejak kutipan dibuat. Silakan hitung ulang kutipan.',

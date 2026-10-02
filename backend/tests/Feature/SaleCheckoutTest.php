@@ -281,49 +281,41 @@ class SaleCheckoutTest extends TestCase
         $this->buku->forceFill(['stock' => 10])->save();
 
         $response = $this->actingAs($this->cashier)->postJson('/api/v1/sales',
-            $this->checkoutPayload($quoteId)
+            $this->checkoutPayload($quoteId, ['tendered_amount' => 250000])
         );
 
         $response->assertStatus(409)
             ->assertJson(['success' => false, 'error' => ['code' => 'INSUFFICIENT_STOCK']]);
 
         $this->assertEquals(0, Sale::count());
-        $this->assertEquals(0, StockMovement::count());
+        // No NEW stock movement should be recorded beyond the 6 seeded ones.
+        $this->assertEquals(6, StockMovement::count());
     }
 
-    public function test_checkout_requires_open_shift(): void
+    public function test_checkout_rejects_when_shift_changed_after_quote(): void
     {
-        // Close the currently open shift
+        // Mint a quote under the shift opened in setUp().
+        $quoteId = $this->createQuote([['product_id' => $this->buku->id, 'quantity' => 1]]);
+
+        // Close that shift and open a brand-new one, so the cashier's current
+        // shift no longer matches the shift recorded on the quote.
         $this->actingAs($this->cashier)->postJson('/api/v1/shifts/close', [
             'actual_cash' => 100000,
         ]);
-
-        $quoteId = $this->createQuoteNoShiftGuard();
-
-        $response = $this->actingAs($this->cashier)->postJson('/api/v1/sales',
-            $this->checkoutPayload($quoteId)
-        );
-
-        $response->assertStatus(409)
-            ->assertJson(['success' => false, 'error' => ['code' => 'SHIFT_MISMATCH']]);
-    }
-
-    protected function createQuoteNoShiftGuard(): string
-    {
-        // Re-open a shift just to mint a quote, then close it again so the
-        // checkout runs against a stale shift reference.
         $this->actingAs($this->cashier)->postJson('/api/v1/shifts/open', [
             'terminal_id' => $this->terminal->id,
             'starting_cash' => 50000,
         ])->assertStatus(201);
 
-        $quoteId = $this->createQuote([['product_id' => $this->buku->id, 'quantity' => 1]]);
+        $response = $this->actingAs($this->cashier)->postJson('/api/v1/sales',
+            $this->checkoutPayload($quoteId, ['tendered_amount' => 5000])
+        );
 
-        $this->actingAs($this->cashier)->postJson('/api/v1/shifts/close', [
-            'actual_cash' => 50000,
-        ]);
+        $response->assertStatus(409)
+            ->assertJson(['success' => false, 'error' => ['code' => 'SHIFT_MISMATCH']]);
 
-        return $quoteId;
+        $this->assertEquals(0, Sale::count());
+        $this->assertEquals(75, $this->buku->fresh()->stock);
     }
 
     public function test_sale_detail_and_receipt_render_from_snapshots(): void
@@ -390,8 +382,9 @@ class SaleCheckoutTest extends TestCase
         // Owner is not subject to the cashier discount cap, so a 100% item
         // discount can be applied to produce a zero-total sale.
         $owner = User::where('email', 'owner@dragonmart.local')->first();
+        $terminal2 = Terminal::where('code', 'TERM-02')->first();
         $this->actingAs($owner)->postJson('/api/v1/shifts/open', [
-            'terminal_id' => $this->terminal->id,
+            'terminal_id' => $terminal2->id,
             'starting_cash' => 50000,
         ])->assertStatus(201);
 

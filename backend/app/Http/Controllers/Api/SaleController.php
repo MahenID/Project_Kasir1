@@ -27,7 +27,9 @@ class SaleController extends Controller
     {
         $user = $request->user();
 
-        $result = $this->saleService->checkout(
+        // SaleService::checkout delegates to IdempotencyService::execute, which
+        // returns the finalized response snapshot directly.
+        $salePayload = $this->saleService->checkout(
             $user,
             $request->input('quote_id'),
             $request->input('payment_method'),
@@ -38,7 +40,7 @@ class SaleController extends Controller
         );
 
         return ApiResponse::success(
-            $result['response'],
+            $salePayload,
             'Transaksi penjualan berhasil diselesaikan.',
             201
         );
