@@ -86,6 +86,8 @@ class StockService
 
     /**
      * Decrement stock atomically and record immutable movement ledger.
+     *
+     * @param bool $bypassInventoryGuard See incrementStock() for the rationale.
      */
     public function decrementStock(
         Product $product,
@@ -95,9 +97,12 @@ class StockService
         int $referenceId,
         ?int $referenceLineId,
         int $userId,
-        ?string $reason = null
+        ?string $reason = null,
+        bool $bypassInventoryGuard = false
     ): StockMovement {
-        $this->checkInventoryGuard();
+        if (!$bypassInventoryGuard) {
+            $this->checkInventoryGuard();
+        }
 
         $stockBefore = (int) $product->stock;
         $stockAfter = $stockBefore - $quantity;
@@ -133,6 +138,11 @@ class StockService
     /**
      * Increment stock atomically, recalculate moving weighted-average cost,
      * and record immutable movement ledger.
+     *
+     * @param bool $bypassInventoryGuard Set to true only by StocktakeService::post
+     *        (which already holds the inventory_control row lock and is the
+     *        legitimate mechanism to lift the freeze). Any other caller should
+     *        leave this false so the stocktake guard continues to work.
      */
     public function incrementStock(
         Product $product,
@@ -143,9 +153,12 @@ class StockService
         int $referenceId,
         ?int $referenceLineId,
         int $userId,
-        ?string $reason = null
+        ?string $reason = null,
+        bool $bypassInventoryGuard = false
     ): StockMovement {
-        $this->checkInventoryGuard();
+        if (!$bypassInventoryGuard) {
+            $this->checkInventoryGuard();
+        }
 
         $stockBefore = (int) $product->stock;
         $costBefore = (string) $product->average_cost;
