@@ -1,0 +1,544 @@
+openapi: 3.1.0
+info:
+  title: DragonMart POS API — Phase 4 Operational Completeness Contract
+  version: 4.0.0
+  description: >
+    API Contract for DragonMart POS Phase 4 — Operational Completeness.
+    Covers the Receiving (Penerimaan Barang) lifecycle: draft, line edits,
+    approval, atomic stock & moving-average-cost posting, and cancellation.
+    State machine: draft -> approved -> posted, or -> cancelled at any
+    pre-posted stage. Only the POST endpoint mutates stock and writes
+    the immutable stock_movements ledger; draft and approval are free of
+    side effects beyond row creation.
+
+servers:
+  - url: http://localhost:8000
+    description: Direct Backend Server
+  - url: http://localhost:3000
+    description: Frontend Reverse Proxy Origin
+
+tags:
+  - name: Receivings
+    description: >
+      Receiving documents (penerimaan barang). Only `posted` documents
+      increment stock and update the moving weighted-average cost.
+
+paths:
+  /api/v1/receivings:
+    get:
+      summary: List receiving documents
+      description: >
+        Returns receiving documents in reverse insertion order. Inventory
+        managers see all documents; non-inventory users (cashiers) are
+        limited to documents they themselves created.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, approved, posted, cancelled]
+          required: false
+          description: Filter by document status.
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Paginated list of receiving documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingListResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create a new draft receiving
+      description: >
+        Creates a new receiving document in `draft` status. The optional
+        `items` array seeds initial line items; otherwise the document is
+        created empty and lines can be added via PUT /receivings/{id}/lines.
+        Drafts have no stock or cost effect.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReceivingRequest'
+      responses:
+        '201':
+          description: Draft receiving created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/receivings/{receiving}:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    get:
+      summary: Get a single receiving document
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Receiving detail with line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/receivings/{receiving}/lines:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    put:
+      summary: Replace the entire line set on a draft receiving
+      description: >
+        Atomically replaces all line items. Only allowed while the document
+        is in `draft` status; once approved or posted, lines are frozen.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReceivingLinesRequest'
+      responses:
+        '200':
+          description: Lines replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/receivings/{receiving}/approve:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Freeze the line set and mark the document as approved
+      description: >
+        Requires the `manage-inventory` permission (owner/manager). After
+        approval, the line set is frozen; the document can be posted or
+        cancelled but no longer edited.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Document approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Document has no line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/receivings/{receiving}/post:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Post an approved receiving
+      description: >
+        Executes the receiving atomically: locks products in ascending ID
+        order, increments stock for each line, recalculates the moving
+        weighted-average cost, writes the immutable `stock_movements`
+        ledger, and marks the document as `posted`. Inventory is rejected
+        while a stocktake is in progress (`INVENTORY_FROZEN`).
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Document posted; stock and cost updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in approved status, or inventory frozen
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/receivings/{receiving}/cancel:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Cancel a draft or approved receiving
+      description: >
+        Cancels a pre-posted document. Posted documents cannot be cancelled;
+        create a correction via `inventory_adjustments` instead. The
+        optional `notes` field is recorded on the document for audit.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelReceivingRequest'
+      responses:
+        '200':
+          description: Document cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is already posted or cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: laravel-session
+
+  responses:
+    Unauthorized:
+      description: Unauthenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    MetaEnvelope:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+      required: [request_id]
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message, fields]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+            fields:
+              type: object
+              additionalProperties: true
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ReceivingLine:
+      type: object
+      required: [id, product_id, quantity, unit_cost, extended_cost]
+      properties:
+        id:
+          type: integer
+        product_id:
+          type: integer
+        product_name:
+          type: string
+          nullable: true
+        product_sku:
+          type: string
+          nullable: true
+        quantity:
+          type: integer
+          minimum: 1
+        unit_cost:
+          type: integer
+          description: Whole rupiah, integer for the API response (stored as DECIMAL(20,6))
+        extended_cost:
+          type: integer
+
+    Receiving:
+      type: object
+      required:
+        - id
+        - receiving_number
+        - type
+        - status
+        - items
+        - totals
+      properties:
+        id:
+          type: integer
+        receiving_number:
+          type: string
+          example: RCV-20261009-00001
+        type:
+          type: string
+          enum: [purchase, opening]
+        status:
+          type: string
+          enum: [draft, approved, posted, cancelled]
+        supplier:
+          nullable: true
+          type: object
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+        external_reference:
+          type: string
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        posted_by:
+          nullable: true
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        correction_notes:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceivingLine'
+        totals:
+          type: object
+          required: [total_quantity, total_extended_cost]
+          properties:
+            total_quantity:
+              type: integer
+            total_extended_cost:
+              type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReceivingListItem:
+      type: object
+      required: [id, receiving_number, type, status, created_at]
+      properties:
+        id: { type: integer }
+        receiving_number: { type: string }
+        type: { type: string, enum: [purchase, opening] }
+        status: { type: string, enum: [draft, approved, posted, cancelled] }
+        supplier_id: { type: integer, nullable: true }
+        supplier_name: { type: string, nullable: true }
+        external_reference: { type: string, nullable: true }
+        received_at: { type: string, format: date-time, nullable: true }
+        created_by: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreateReceivingRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [purchase, opening]
+        supplier_id:
+          type: integer
+          nullable: true
+        external_reference:
+          type: string
+          maxLength: 100
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            required: [product_id, quantity, unit_cost]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+              unit_cost: { type: number, minimum: 0 }
+
+    UpdateReceivingLinesRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, quantity, unit_cost]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+              unit_cost: { type: number, minimum: 0 }
+
+    CancelReceivingRequest:
+      type: object
+      properties:
+        notes:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    Pagination:
+      type: object
+      required: [current_page, per_page, total, last_page]
+      properties:
+        current_page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        last_page: { type: integer }
+
+    ReceivingResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Receiving' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    ReceivingListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReceivingListItem' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }

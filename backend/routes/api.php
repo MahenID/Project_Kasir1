@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CheckoutQuoteController;
 use App\Http\Controllers\Api\OperationRecoveryController;
+use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
 use App\Support\ApiResponse;
@@ -60,5 +61,16 @@ Route::prefix('v1')->group(function () {
 
         // Operation Key Recovery
         Route::get('/operations/{operation}/{key}', [OperationRecoveryController::class, 'recoverOperation']);
+
+        // Receivings (Phase 4 — Operational Completeness: Inventory)
+        Route::prefix('receivings')->group(function () {
+            Route::get('/', [ReceivingController::class, 'index']);
+            Route::post('/', [ReceivingController::class, 'store']);
+            Route::get('/{receiving}', [ReceivingController::class, 'show'])->whereNumber('receiving');
+            Route::put('/{receiving}/lines', [ReceivingController::class, 'updateLines'])->whereNumber('receiving');
+            Route::post('/{receiving}/approve', [ReceivingController::class, 'approve'])->whereNumber('receiving');
+            Route::post('/{receiving}/post', [ReceivingController::class, 'post'])->whereNumber('receiving');
+            Route::post('/{receiving}/cancel', [ReceivingController::class, 'cancel'])->whereNumber('receiving');
+        });
     });
 });
