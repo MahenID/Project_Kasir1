@@ -55,6 +55,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [SaleController::class, 'index']);
             Route::get('/{sale}', [SaleController::class, 'show'])->whereNumber('sale');
             Route::get('/{sale}/receipt', [SaleController::class, 'receipt'])->whereNumber('sale');
+            Route::post('/{sale}/reprints', [SaleController::class, 'reprint'])->whereNumber('sale');
         });
 
         // Operation Key Recovery

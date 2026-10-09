@@ -209,6 +209,67 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /api/v1/sales/{sale}/reprints:
+    post:
+      summary: Record a receipt reprint and return a copy-marked receipt payload
+      description: >
+        Logs an immutable reprint entry in `sale_reprints` and emits an
+        `activity_log` event. The returned payload is the same print-ready
+        receipt structure as GET /api/v1/sales/{sale}/receipt with two extra
+        flags for the browser print dialog: `is_copy: true` and
+        `copy_label: "SALINAN"`, plus a `reprint` block recording who
+        reprinted, when, and the optional reason. Reprinting never mutates
+        the parent sale: a printer failure cannot duplicate or void the
+        transaction. Authorization uses `view-all-sales` (owner/manager) or
+        `view-own-sales` (cashier, restricted to their own sales).
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: sale
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 100
+                  nullable: true
+                  description: Optional free-text reason recorded in the audit trail.
+                  example: "Kertas struk robek"
+      responses:
+        '201':
+          description: Reprint recorded; receipt payload returned with copy flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReprintResponseEnvelope'
+        '403':
+          description: Forbidden (caller lacks view-own-sales/view-all-sales or is not the sale owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Sale not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Validation error (e.g. reason longer than 100 chars)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
 components:
   securitySchemes:
     cookieAuth:
@@ -520,6 +581,51 @@ components:
           example: true
         data:
           $ref: '#/components/schemas/Receipt'
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ReceiptCopy:
+      type: object
+      description: >
+        Receipt payload with the copy-marked flags required for reprint
+        workflows. Mirrors the standard Receipt structure and adds `is_copy`,
+        `copy_label`, and a `reprint` audit block.
+      required: [is_copy, copy_label, reprint]
+      properties:
+        is_copy:
+          type: boolean
+          example: true
+        copy_label:
+          type: string
+          example: SALINAN
+        reprint:
+          type: object
+          required: [id, reprinted_by_user_id, reprinted_by_name, reprinted_at]
+          properties:
+            id:
+              type: integer
+            reprinted_by_user_id:
+              type: integer
+            reprinted_by_name:
+              type: string
+            reason:
+              type: string
+              nullable: true
+            reprinted_at:
+              type: string
+              format: date-time
+
+    ReprintResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/ReceiptCopy'
         message:
           type: string
         meta:
