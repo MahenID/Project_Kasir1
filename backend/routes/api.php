@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\OperationRecoveryController;
 use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
+use App\Http\Controllers\Api\StocktakeController;
 use App\Support\ApiResponse;
 use Illuminate\Support\Facades\Route;
 
@@ -81,6 +82,18 @@ Route::prefix('v1')->group(function () {
             Route::get('/{adjustment}', [InventoryAdjustmentController::class, 'show'])->whereNumber('adjustment');
             Route::post('/{adjustment}/post', [InventoryAdjustmentController::class, 'post'])->whereNumber('adjustment');
             Route::post('/{adjustment}/cancel', [InventoryAdjustmentController::class, 'cancel'])->whereNumber('adjustment');
+        });
+
+        // Stocktakes (Phase 4 — Operational Completeness: Inventory)
+        Route::prefix('stocktakes')->group(function () {
+            Route::get('/', [StocktakeController::class, 'index']);
+            Route::get('/active', [StocktakeController::class, 'active']);
+            Route::post('/', [StocktakeController::class, 'start']);
+            Route::get('/{stocktake}', [StocktakeController::class, 'show'])->whereNumber('stocktake');
+            Route::post('/{stocktake}/count/{product}', [StocktakeController::class, 'count'])->whereNumber('stocktake')->whereNumber('product');
+            Route::post('/{stocktake}/counts', [StocktakeController::class, 'bulkCount'])->whereNumber('stocktake');
+            Route::post('/{stocktake}/post', [StocktakeController::class, 'post'])->whereNumber('stocktake');
+            Route::post('/{stocktake}/cancel', [StocktakeController::class, 'cancel'])->whereNumber('stocktake');
         });
     });
 });
