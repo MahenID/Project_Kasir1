@@ -54,4 +54,13 @@ class StockMovement extends Model
     {
         return $this->morphTo(__FUNCTION__, 'reference_type', 'reference_id');
     }
+
+    // Movement type values (PRD §6 + stock_movements migration comment).
+    public const TYPE_SALE = 'sale';
+    public const TYPE_RECEIVING_PURCHASE = 'receiving_purchase';
+    public const TYPE_RECEIVING_OPENING = 'receiving_opening';
+    public const TYPE_ADJUSTMENT_QUANTITY = 'adjustment_quantity';
+    public const TYPE_ADJUSTMENT_REVALUATION = 'adjustment_revaluation';
+    public const TYPE_STOCKTAKE_ADJUSTMENT = 'stocktake_adjustment';
+    public const TYPE_RETURN_RESTOCK = 'return_restock';
 }
