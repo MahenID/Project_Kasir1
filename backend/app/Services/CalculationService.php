@@ -84,6 +84,7 @@ class CalculationService
             $itemCalc = self::calculateLineItem($qty, $price, $dType, $dVal);
 
             $calculatedLines[] = array_merge($line, [
+                'unit_price' => $price,
                 'gross' => $itemCalc['gross'],
                 'item_discount_type' => $itemCalc['discount_type'],
                 'item_discount_input' => $itemCalc['discount_input'],

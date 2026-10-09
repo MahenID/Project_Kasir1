@@ -1,0 +1,632 @@
+openapi: 3.1.0
+info:
+  title: DragonMart POS API — Phase 3 First Complete Sale Contract
+  version: 3.0.0
+  description: >
+    API Contract for DragonMart POS Phase 3 — First Complete Sale.
+    Covers the atomic checkout finalization endpoint (POST /api/v1/sales),
+    sale listing/detail, and the immutable print-ready receipt payload rendered
+    from stored snapshots. Builds upon the Phase 2 server quote
+    (POST /api/v1/checkout/quotes) and durable idempotency recovery contract.
+servers:
+  - url: http://localhost:8000
+    description: Direct Backend Server
+  - url: http://localhost:3000
+    description: Frontend Reverse Proxy Origin
+
+paths:
+  /api/v1/sales:
+    post:
+      summary: Finalize a checkout atomically from a server quote
+      description: >
+        Consumes a valid (120-second) server quote, re-validates product and
+        store commercial versions, locks and decrements stock, writes the sale,
+        sale items, payment, and immutable stock ledger in a single database
+        transaction, and records the payment. Retries on deadlock up to 3 times.
+        Safe to retry with the same idempotency key — a duplicate request returns
+        the original sale without re-executing.
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quote_id, payment_method, idempotency_key]
+              properties:
+                quote_id:
+                  type: string
+                  format: uuid
+                  description: Server quote issued by POST /api/v1/checkout/quotes
+                payment_method:
+                  type: string
+                  enum: [cash, debit, credit, qris, transfer]
+                tendered_amount:
+                  type: integer
+                  nullable: true
+                  description: >
+                    Integer rupiah handed over. REQUIRED for cash. For cash:
+                    tendered_amount >= grand_total; change = tendered_amount − grand_total.
+                    Ignored for manual non-cash (change is always zero).
+                  example: 50000
+                payment_reference:
+                  type: string
+                  maxLength: 100
+                  nullable: true
+                  description: Manual reference number for non-cash methods
+                idempotency_key:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  description: Durable client key preventing duplicate charges
+            examples:
+              cash:
+                value:
+                  quote_id: 9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f
+                  payment_method: cash
+                  tendered_amount: 50000
+                  idempotency_key: chk-20261002-000123
+              qris:
+                value:
+                  quote_id: 9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f
+                  payment_method: qris
+                  payment_reference: QRIS-REF-98765
+                  idempotency_key: chk-20261002-000124
+      responses:
+        '201':
+          description: Sale completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaleResponseEnvelope'
+        '409':
+          description: >
+            State conflict — quote expired (QUOTE_EXPIRED), already consumed
+            (QUOTE_ALREADY_CONSUMED), stale commercial data (QUOTE_STALE),
+            shift mismatch (SHIFT_MISMATCH), idempotency conflict
+            (IDEMPOTENCY_CONFLICT), or insufficient stock (INSUFFICIENT_STOCK).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: >
+            Validation or payment error — missing idempotency key, invalid
+            payment method, missing/insufficient tendered amount
+            (INSUFFICIENT_PAYMENT, TENDERED_REQUIRED).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Quote belongs to another user (QUOTE_FORBIDDEN)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Quote not found (QUOTE_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+    get:
+      summary: List sales (paginated)
+      description: >
+        Returns sales in reverse chronological order. Cashiers only see their
+        own sales; owner/manager see all. Default 25 rows, maximum 100.
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 25
+            maximum: 100
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Paginated list of sales
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaleListResponseEnvelope'
+
+  /api/v1/sales/{sale}:
+    get:
+      summary: Get full detail of a single sale
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: sale
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Sale detail with items, totals, and payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaleResponseEnvelope'
+        '403':
+          description: Cashier attempting to view another cashier's sale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Sale not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/sales/{sale}/receipt:
+    get:
+      summary: Get print-ready receipt payload rendered from immutable snapshots
+      description: >
+        Returns a receipt structure safe to render/print in the browser even
+        after product names, prices, or store settings change. All display
+        values are sourced from the stored sale snapshots.
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: sale
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Print-ready receipt payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptResponseEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Sale not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/sales/{sale}/reprints:
+    post:
+      summary: Record a receipt reprint and return a copy-marked receipt payload
+      description: >
+        Logs an immutable reprint entry in `sale_reprints` and emits an
+        `activity_log` event. The returned payload is the same print-ready
+        receipt structure as GET /api/v1/sales/{sale}/receipt with two extra
+        flags for the browser print dialog: `is_copy: true` and
+        `copy_label: "SALINAN"`, plus a `reprint` block recording who
+        reprinted, when, and the optional reason. Reprinting never mutates
+        the parent sale: a printer failure cannot duplicate or void the
+        transaction. Authorization uses `view-all-sales` (owner/manager) or
+        `view-own-sales` (cashier, restricted to their own sales).
+      tags: [Sales]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: sale
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 100
+                  nullable: true
+                  description: Optional free-text reason recorded in the audit trail.
+                  example: "Kertas struk robek"
+      responses:
+        '201':
+          description: Reprint recorded; receipt payload returned with copy flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReprintResponseEnvelope'
+        '403':
+          description: Forbidden (caller lacks view-own-sales/view-all-sales or is not the sale owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Sale not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Validation error (e.g. reason longer than 100 chars)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: laravel-session
+
+  schemas:
+    MetaEnvelope:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        last_page:
+          type: integer
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message, fields]
+          properties:
+            code:
+              type: string
+              example: QUOTE_EXPIRED
+            message:
+              type: string
+            fields:
+              type: object
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    SaleItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        product_id:
+          type: integer
+        sku:
+          type: string
+        name:
+          type: string
+        unit:
+          type: string
+        quantity:
+          type: integer
+        unit_price:
+          type: integer
+          description: Integer rupiah
+        gross_amount:
+          type: integer
+        item_discount_amount:
+          type: integer
+        sale_discount_allocation:
+          type: integer
+        net_amount:
+          type: integer
+        tax_amount:
+          type: integer
+        line_total:
+          type: integer
+
+    SaleTotals:
+      type: object
+      properties:
+        subtotal:
+          type: integer
+          description: Gross total before any discount
+        item_discount_total:
+          type: integer
+        sale_discount_type:
+          type: string
+          nullable: true
+          enum: [percent, fixed, null]
+        sale_discount_input:
+          type: integer
+          nullable: true
+        sale_discount_amount:
+          type: integer
+        net_total:
+          type: integer
+        tax_rate_percent:
+          type: number
+          nullable: true
+        tax_total:
+          type: integer
+        grand_total:
+          type: integer
+          description: Final amount due in integer rupiah (max 1,000,000,000)
+
+    SalePayment:
+      type: object
+      properties:
+        method:
+          type: string
+          enum: [cash, debit, credit, qris, transfer]
+        amount_due:
+          type: integer
+        amount_paid:
+          type: integer
+        change_amount:
+          type: integer
+        reference_number:
+          type: string
+          nullable: true
+
+    CustomerSnapshot:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+
+    Sale:
+      type: object
+      properties:
+        id:
+          type: integer
+        receipt_number:
+          type: string
+          example: DM-20261002-00001
+        status:
+          type: string
+          enum: [completed, cancelled]
+        return_status:
+          type: string
+          enum: [none, partial, full]
+        completed_at:
+          type: string
+          format: date-time
+        shift_id:
+          type: integer
+        cashier_name:
+          type: string
+        terminal_code:
+          type: string
+        customer:
+          $ref: '#/components/schemas/CustomerSnapshot'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SaleItem'
+        totals:
+          $ref: '#/components/schemas/SaleTotals'
+        payment:
+          $ref: '#/components/schemas/SalePayment'
+
+    SaleSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        receipt_number:
+          type: string
+        status:
+          type: string
+        return_status:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+        cashier_name:
+          type: string
+        grand_total:
+          type: integer
+        payment_method:
+          type: string
+          nullable: true
+
+    SaleResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Sale'
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    SaleListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SaleSummary'
+        message:
+          type: string
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PaginationMeta'
+
+    ReceiptItem:
+      type: object
+      properties:
+        name:
+          type: string
+        sku:
+          type: string
+        unit:
+          type: string
+        quantity:
+          type: integer
+        unit_price:
+          type: integer
+        gross_amount:
+          type: integer
+        item_discount_amount:
+          type: integer
+        sale_discount_allocation:
+          type: integer
+        net_amount:
+          type: integer
+        tax_amount:
+          type: integer
+        line_total:
+          type: integer
+
+    ReceiptStore:
+      type: object
+      properties:
+        store_name:
+          type: string
+        address:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        receipt_footer:
+          type: string
+          nullable: true
+        settings_version:
+          type: integer
+          nullable: true
+
+    Receipt:
+      type: object
+      properties:
+        receipt_number:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+        store:
+          $ref: '#/components/schemas/ReceiptStore'
+        cashier_name:
+          type: string
+        terminal_code:
+          type: string
+        customer:
+          $ref: '#/components/schemas/CustomerSnapshot'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceiptItem'
+        totals:
+          $ref: '#/components/schemas/SaleTotals'
+        payment:
+          $ref: '#/components/schemas/SalePayment'
+        receipt_footer:
+          type: string
+          nullable: true
+
+    ReceiptResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Receipt'
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ReceiptCopy:
+      type: object
+      description: >
+        Receipt payload with the copy-marked flags required for reprint
+        workflows. Mirrors the standard Receipt structure and adds `is_copy`,
+        `copy_label`, and a `reprint` audit block.
+      required: [is_copy, copy_label, reprint]
+      properties:
+        is_copy:
+          type: boolean
+          example: true
+        copy_label:
+          type: string
+          example: SALINAN
+        reprint:
+          type: object
+          required: [id, reprinted_by_user_id, reprinted_by_name, reprinted_at]
+          properties:
+            id:
+              type: integer
+            reprinted_by_user_id:
+              type: integer
+            reprinted_by_name:
+              type: string
+            reason:
+              type: string
+              nullable: true
+            reprinted_at:
+              type: string
+              format: date-time
+
+    ReprintResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/ReceiptCopy'
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'

@@ -86,4 +86,9 @@ class Sale extends Model
     {
         return $this->hasMany(ReturnRequest::class);
     }
+
+    public function reprints(): HasMany
+    {
+        return $this->hasMany(SaleReprint::class);
+    }
 }

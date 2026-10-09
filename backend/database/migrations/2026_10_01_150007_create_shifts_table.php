@@ -25,10 +25,12 @@ return new class extends Migration
             $table->json('z_report_snapshot')->nullable();
             $table->timestamps();
 
+            // CASE expression is valid in both MySQL and SQLite (IF() is MySQL-only,
+            // which breaks the SQLite in-memory test database).
             $table->unsignedBigInteger('active_user_id')
-                ->virtualAs("IF(status = 'open', user_id, NULL)");
+                ->virtualAs("CASE WHEN status = 'open' THEN user_id ELSE NULL END");
             $table->unsignedBigInteger('active_terminal_id')
-                ->virtualAs("IF(status = 'open', terminal_id, NULL)");
+                ->virtualAs("CASE WHEN status = 'open' THEN terminal_id ELSE NULL END");
 
             $table->unique('active_user_id', 'shifts_active_user_unique');
             $table->unique('active_terminal_id', 'shifts_active_terminal_unique');
