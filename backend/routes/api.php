@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CheckoutQuoteController;
+use App\Http\Controllers\Api\InventoryAdjustmentController;
 use App\Http\Controllers\Api\OperationRecoveryController;
 use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
@@ -71,6 +72,15 @@ Route::prefix('v1')->group(function () {
             Route::post('/{receiving}/approve', [ReceivingController::class, 'approve'])->whereNumber('receiving');
             Route::post('/{receiving}/post', [ReceivingController::class, 'post'])->whereNumber('receiving');
             Route::post('/{receiving}/cancel', [ReceivingController::class, 'cancel'])->whereNumber('receiving');
+        });
+
+        // Inventory Adjustments (Phase 4 — Operational Completeness: Inventory)
+        Route::prefix('inventory-adjustments')->group(function () {
+            Route::get('/', [InventoryAdjustmentController::class, 'index']);
+            Route::post('/', [InventoryAdjustmentController::class, 'store']);
+            Route::get('/{adjustment}', [InventoryAdjustmentController::class, 'show'])->whereNumber('adjustment');
+            Route::post('/{adjustment}/post', [InventoryAdjustmentController::class, 'post'])->whereNumber('adjustment');
+            Route::post('/{adjustment}/cancel', [InventoryAdjustmentController::class, 'cancel'])->whereNumber('adjustment');
         });
     });
 });
