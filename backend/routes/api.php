@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CheckoutQuoteController;
 use App\Http\Controllers\Api\InventoryAdjustmentController;
@@ -94,6 +98,42 @@ Route::prefix('v1')->group(function () {
             Route::post('/{stocktake}/counts', [StocktakeController::class, 'bulkCount'])->whereNumber('stocktake');
             Route::post('/{stocktake}/post', [StocktakeController::class, 'post'])->whereNumber('stocktake');
             Route::post('/{stocktake}/cancel', [StocktakeController::class, 'cancel'])->whereNumber('stocktake');
+        });
+
+        // Master Data — Categories (Phase 4 — Operational Completeness)
+        Route::prefix('categories')->group(function () {
+            Route::get('/', [CategoryController::class, 'index']);
+            Route::get('/{category}', [CategoryController::class, 'show'])->whereNumber('category');
+            Route::post('/', [CategoryController::class, 'store']);
+            Route::put('/{category}', [CategoryController::class, 'update'])->whereNumber('category');
+            Route::post('/{category}/archive', [CategoryController::class, 'archive'])->whereNumber('category');
+        });
+
+        // Master Data — Products
+        Route::prefix('products')->group(function () {
+            Route::get('/', [ProductController::class, 'index']);
+            Route::get('/{product}', [ProductController::class, 'show'])->whereNumber('product');
+            Route::post('/', [ProductController::class, 'store']);
+            Route::put('/{product}', [ProductController::class, 'update'])->whereNumber('product');
+            Route::post('/{product}/archive', [ProductController::class, 'archive'])->whereNumber('product');
+        });
+
+        // Master Data — Suppliers
+        Route::prefix('suppliers')->group(function () {
+            Route::get('/', [SupplierController::class, 'index']);
+            Route::get('/{supplier}', [SupplierController::class, 'show'])->whereNumber('supplier');
+            Route::post('/', [SupplierController::class, 'store']);
+            Route::put('/{supplier}', [SupplierController::class, 'update'])->whereNumber('supplier');
+            Route::post('/{supplier}/archive', [SupplierController::class, 'archive'])->whereNumber('supplier');
+        });
+
+        // Master Data — Customers
+        Route::prefix('customers')->group(function () {
+            Route::get('/', [CustomerController::class, 'index']);
+            Route::get('/{customer}', [CustomerController::class, 'show'])->whereNumber('customer');
+            Route::post('/', [CustomerController::class, 'store']);
+            Route::put('/{customer}', [CustomerController::class, 'update'])->whereNumber('customer');
+            Route::post('/{customer}/archive', [CustomerController::class, 'archive'])->whereNumber('customer');
         });
     });
 });

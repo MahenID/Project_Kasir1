@@ -28,6 +28,22 @@ tags:
       Two document types share the same state machine: quantity (signed
       quantity_delta per line) and revaluation (owner-only new_average_cost
       per line). Only `posted` documents mutate stock or cost.
+  - name: Categories
+    description: >
+      Category master data (FR-PROD-01). Unique auto-generated slug; archival
+      blocked while active products remain.
+  - name: Products
+    description: >
+      Product master data (FR-PROD-02/03/04, FR-MEDIA-01). Stock and average
+      cost are read-only in product CRUD; they change only via posted inventory
+      documents. Selling-price changes bump commercial_version (stale quotes).
+      Cost fields are omitted from cashier responses.
+  - name: Suppliers
+    description: Supplier master data (FR-SUPP-01). Owner/manager only.
+  - name: Customers
+    description: >
+      Customer master data (FR-CUST-01). All roles search/create; editing and
+      archival are owner/manager only. No loyalty points.
 
 paths:
   /api/v1/receivings:
@@ -471,6 +487,494 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /api/v1/categories:
+    get:
+      summary: List categories
+      description: Available to all authenticated roles. Optional `search`, `active_only`.
+      operationId: listCategories
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Category list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Create category
+      description: manage-catalog permission. Slug is auto-generated and uniquified.
+      operationId: createCategory
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+                is_active: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/categories/{category}:
+    parameters:
+      - { in: path, name: category, required: true, schema: { type: integer } }
+    get:
+      summary: Get category detail
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Category detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update category
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CATEGORY_IN_USE — active products still reference this category (AC-36)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/categories/{category}/archive:
+    parameters:
+      - { in: path, name: category, required: true, schema: { type: integer } }
+    post:
+      summary: Archive (deactivate) category
+      description: Rejected with CATEGORY_IN_USE while active products remain.
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Category archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CATEGORY_IN_USE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/products:
+    get:
+      summary: Search products (FR-PROD-03/04)
+      description: >
+        Filters: `search` (SKU/barcode/name), `barcode` (exact, leading zeros
+        preserved), `category_id`, `active_only`, `low_stock` (stock <= min).
+        Cashier responses omit average_cost and commercial_version.
+      operationId: listProducts
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: barcode, schema: { type: string } }
+        - { in: query, name: category_id, schema: { type: integer } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+        - { in: query, name: low_stock, schema: { type: boolean } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Product list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create product (multipart for image)
+      description: >
+        manage-catalog permission. stock/average_cost are NOT accepted — new
+        products start at zero. Image: JPEG/PNG/WebP <=5 MB, content-verified
+        (AC-33); invalid content rejected 422 IMAGE_INVALID_CONTENT, oversized
+        413 IMAGE_TOO_LARGE (after passing the 5 MB form rule), corrupt
+        processing leaves no product/product change.
+      operationId: createProduct
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [sku, name, category_id, selling_price]
+              properties:
+                sku: { type: string, maxLength: 64 }
+                barcode: { type: string, maxLength: 64, nullable: true }
+                name: { type: string, maxLength: 200 }
+                description: { type: string, nullable: true }
+                category_id: { type: integer }
+                preferred_supplier_id: { type: integer, nullable: true }
+                unit: { type: string, maxLength: 30, default: pcs }
+                selling_price: { type: integer, minimum: 0, description: Whole rupiah }
+                min_stock: { type: integer, minimum: 0, default: 0 }
+                is_active: { type: boolean, default: true }
+                image: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              required: [sku, name, category_id, selling_price]
+              properties:
+                sku: { type: string }
+                name: { type: string }
+                category_id: { type: integer }
+                selling_price: { type: integer, minimum: 0 }
+      responses:
+        '201':
+          description: Product created (zero stock/cost)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: PRODUCT_SKU_TAKEN / PRODUCT_BARCODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: IMAGE_TOO_LARGE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/products/{product}:
+    parameters:
+      - { in: path, name: product, required: true, schema: { type: integer } }
+    get:
+      summary: Get product detail
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Product detail (cost fields only for view-costs holders)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update product
+      description: >
+        Partial update. Selling-price change increments commercial_version so
+        outstanding quotes fail checkout with QUOTE_STALE. stock/average_cost
+        are not writable here.
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                sku: { type: string }
+                barcode: { type: string, nullable: true }
+                name: { type: string }
+                description: { type: string, nullable: true }
+                category_id: { type: integer }
+                preferred_supplier_id: { type: integer, nullable: true }
+                unit: { type: string }
+                selling_price: { type: integer, minimum: 0 }
+                min_stock: { type: integer, minimum: 0 }
+                is_active: { type: boolean }
+                image: { type: string, format: binary }
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: PRODUCT_SKU_TAKEN / PRODUCT_BARCODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/products/{product}/archive:
+    parameters:
+      - { in: path, name: product, required: true, schema: { type: integer } }
+    post:
+      summary: Archive (deactivate) product
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Product archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/suppliers:
+    get:
+      summary: List suppliers
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Supplier list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, maxLength: 50 }
+                name: { type: string, maxLength: 150 }
+                contact_person: { type: string, nullable: true }
+                phone: { type: string, nullable: true }
+                email: { type: string, format: email, nullable: true }
+                address: { type: string, nullable: true }
+                is_active: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Supplier created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: SUPPLIER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/suppliers/{supplier}:
+    parameters:
+      - { in: path, name: supplier, required: true, schema: { type: integer } }
+    get:
+      summary: Get supplier detail
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Supplier detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Supplier updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: SUPPLIER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/suppliers/{supplier}/archive:
+    parameters:
+      - { in: path, name: supplier, required: true, schema: { type: integer } }
+    post:
+      summary: Archive deactivate supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Supplier archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/customers:
+    get:
+      summary: Search active customers (cashier-facing)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Customer list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Add customer (any role, e.g. during checkout)
+      description: Code auto-generated as CUST-### when omitted.
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                code: { type: string, maxLength: 50, nullable: true }
+                name: { type: string, maxLength: 150 }
+                phone: { type: string, nullable: true }
+                email: { type: string, format: email, nullable: true }
+                address: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: CUSTOMER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{customer}:
+    parameters:
+      - { in: path, name: customer, required: true, schema: { type: integer } }
+    get:
+      summary: Get customer detail
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Customer detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update customer (owner/manager only)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Customer updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: CUSTOMER_FORBIDDEN — cashier may not edit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CUSTOMER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/customers/{customer}/archive:
+    parameters:
+      - { in: path, name: customer, required: true, schema: { type: integer } }
+    post:
+      summary: Archive customer (owner/manager)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Customer archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: CUSTOMER_FORBIDDEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -836,6 +1340,181 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/ReceivingListItem' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Category:
+      type: object
+      required: [id, name, slug, is_active, products_count]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        is_active: { type: boolean }
+        products_count: { type: integer }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    CategoryResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Category' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    CategoryListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    Product:
+      type: object
+      required: [id, sku, name, selling_price, stock, min_stock, is_active, is_low_stock]
+      properties:
+        id: { type: integer }
+        sku: { type: string }
+        barcode: { type: string, nullable: true, description: Leading zeros preserved }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        unit: { type: string }
+        selling_price: { type: integer, description: Whole rupiah }
+        stock: { type: integer, description: Read-only; mutated only by posted documents }
+        min_stock: { type: integer }
+        is_active: { type: boolean }
+        is_low_stock: { type: boolean, description: stock <= min_stock (FR-PROD-04) }
+        image_url: { type: string, nullable: true }
+        category:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            slug: { type: string }
+        preferred_supplier:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+        average_cost:
+          type: string
+          description: DECIMAL(20,6) string. Present only for view-costs holders (never cashiers).
+        commercial_version:
+          type: integer
+          description: Present only for view-costs holders. Bumped by price changes.
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    ProductResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Product' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    ProductListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Supplier:
+      type: object
+      required: [id, code, name, is_active]
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        contact_person: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    SupplierResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Supplier' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    SupplierListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Supplier' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Customer:
+      type: object
+      required: [id, code, name, is_active]
+      properties:
+        id: { type: integer }
+        code: { type: string, description: 'Auto-generated CUST-### when omitted' }
+        name: { type: string }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    CustomerResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Customer' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    CustomerListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
         message: { type: string }
         meta:
           allOf:
