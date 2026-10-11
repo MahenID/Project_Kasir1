@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
 use App\Http\Controllers\Api\StocktakeController;
+use App\Http\Controllers\Api\TerminalController;
 use App\Support\ApiResponse;
 use Illuminate\Support\Facades\Route;
 
@@ -44,6 +45,9 @@ Route::prefix('v1')->group(function () {
             Route::put('/profile', [AuthController::class, 'updateProfile']);
             Route::put('/password', [AuthController::class, 'updatePassword']);
         });
+
+        // Terminals (master reference untuk pemilihan terminal saat buka shift)
+        Route::get('/terminals', [TerminalController::class, 'index']);
 
         // Shifts & Cash Reconciliation
         Route::prefix('shifts')->group(function () {
