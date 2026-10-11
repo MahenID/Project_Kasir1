@@ -37,11 +37,9 @@ export const shiftApi = {
 
 export const terminalApi = {
   /**
-   * Catatan implementasi: backend belum memiliki route `GET /api/v1/terminals`.
-   * Fallback sementara menggunakan terminal id 1 (default seeder TerminalSeeder).
+   * GET /api/v1/terminals — daftar terminal terdaftar untuk pemilihan terminal
+   * saat buka shift (PRD v2 §4.3). Endpoint backend telah tersedia di
+   * TerminalController@index.
    */
-  list: async (): Promise<Terminal[]> => [
-    { id: 1, code: "POS-01", name: "Kasir Utama 01", is_active: true },
-    { id: 2, code: "POS-02", name: "Kasir 02", is_active: true },
-  ],
+  list: () => apiRequest<Terminal[]>("/terminals"),
 };
