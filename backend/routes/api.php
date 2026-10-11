@@ -1,6 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\AuditEventController;
 use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\ExportController;
+use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\ReturnRequestController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\SupplierController;
@@ -12,7 +16,6 @@ use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
 use App\Http\Controllers\Api\StocktakeController;
-use App\Http\Controllers\Api\ReturnRequestController;
 use App\Support\ApiResponse;
 use Illuminate\Support\Facades\Route;
 
@@ -146,6 +149,28 @@ Route::prefix('v1')->group(function () {
             Route::post('/', [CustomerController::class, 'store']);
             Route::put('/{customer}', [CustomerController::class, 'update'])->whereNumber('customer');
             Route::post('/{customer}/archive', [CustomerController::class, 'archive'])->whereNumber('customer');
+        });
+
+        // Reports, Exports & Audit (Phase 4 — Operational Completeness)
+        Route::prefix('reports')->group(function () {
+            Route::get('/sales', [ReportController::class, 'sales']);
+            Route::get('/top-products', [ReportController::class, 'topProducts']);
+            Route::get('/stock', [ReportController::class, 'stock']);
+            Route::get('/shift-differences', [ReportController::class, 'shiftDifferences']);
+            Route::get('/receiving', [ReportController::class, 'receiving']);
+            Route::get('/returns', [ReportController::class, 'returns']);
+        });
+
+        Route::prefix('exports')->group(function () {
+            Route::get('/', [ExportController::class, 'index']);
+            Route::post('/', [ExportController::class, 'store']);
+            Route::get('/{export}', [ExportController::class, 'show']);
+            Route::get('/{export}/download', [ExportController::class, 'download']);
+        });
+
+        Route::prefix('audit-events')->group(function () {
+            Route::get('/', [AuditEventController::class, 'index']);
+            Route::get('/{auditEvent}', [AuditEventController::class, 'show'])->whereNumber('auditEvent');
         });
     });
 });

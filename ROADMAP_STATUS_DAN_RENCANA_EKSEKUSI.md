@@ -125,16 +125,24 @@ Dokumen ini adalah ringkasan status resmi untuk pelacakan, audit, dan panduan ke
   - Recovery `GET /api/v1/operations/refund-complete/{key}` untuk pemulihan hasil tidak diketahui.
 - [x] **Test**: `ReturnRequestApiTest` 8 test (102 assertion) + smoke konkurensi MySQL 14 check (AC-17 race unit terakhir, idempotensi kunci sama, freeze stocktake, rollback tanpa residu) — **134 test / 717 assertion lulus**.
 - [x] **Kontrak OpenAPI 3.1 Fase 4**: `docs/api/openapi-phase4.yaml` (termasuk path `/api/v1/return-requests*`).
+- [x] **Laporan, Ekspor & Audit (slice ini)**:
+  - `ReportService` + `ReportDateRange`: net sales tanpa pajak, PPN terkumpul/dikembalikan, HPP (COGS) net (retur damaged tidak membalik COGS — PRD §8.1), laba kotor estimasi, produk terlaris (net unit/nilai), sisa stok & valuasi average cost, selisih kas saat penutupan shift immutable, ringkasan penerimaan & retur.
+  - Endpoint `/api/v1/reports/{sales,top-products,stock,shift-differences,receiving,returns}` wajib izin `view-all-reports` (owner/manager); kasir ditolak `403`.
+  - `ExportService` + `GenerateExportJob` (antrean DB) dengan artefak XLSX/PDF dependency-free (`XlsxWriter`, `PdfWriter`), kedaluwarsa artefak 24 jam, dan re-check izin saat unduh (AC-28).
+  - Proteksi injeksi formula spreadsheet: setiap sel dari input pengguna yang diawali `= + - @ \t \r` diberi prefix apostrof (PRD §8.2, AC-28).
+  - `AuditEventController` read-only: owner melihat semua, manager hanya log operasional, kasir `403`.
+- [x] **Test**: `ReportAndExportApiTest` 12 test (50 assertion) — metrik laporan eksak, isolasi peran, escaping injeksi formula, header PDF, kedaluwarsa 24 jam, re-otorisasi unduh, cakupan audit per peran — **146 test / 767 assertion lulus**.
 
 ---
 
-## 3. STATUS SAAT INI (CURRENT SLICE — RETUR & PENGEMBALIAN DANA SELESAI)
+## 3. STATUS SAAT INI (CURRENT SLICE — LAPORAN, EKSPOR & AUDIT SELESAI)
 
 Fase 3 & 4 Backend **sudah selesai dan teruji** di branch `fase/backend`:
-- Slice retur terakhir (commit baru): endpoint HTTP lengkap, `ReturnService` atomik, migrasi normalisasi `restockable`/`damaged`, test 134 lulus (717 assertion), OpenAPI 4.
-- Verifikasi tambahan di MySQL 8.4: 14 check konkurensi/rollback (AC-17 race unit terakhir, idempotensi kunci sama, freeze stocktake, rollback tanpa residu) — **SMOKE PASS**.
+- Slice retur: endpoint HTTP lengkap, `ReturnService` atomik, migrasi normalisasi `restockable`/`damaged`, OpenAPI 4.
+- Slice laporan/ekspor/audit (commit baru): `ReportService` + 6 endpoint laporan, `ExportService` + antrean XLSX/PDF dengan proteksi injeksi formula & kedaluwarsa 24 jam, endpoint audit read-only ber-scope peran.
+- Seluruh backend Fase 3 & 4 lulus **146 test / 767 assertion** di SQLite; smoke konkurensi MySQL 8.4 untuk retur tetap **SMOKE PASS**.
 
-Slice berikutnya (lihat Bagian 4) memilih laporan & ekspor sebelum frontend.
+Slice berikutnya (lihat Bagian 4) beralih ke Frontend kasir/retur serta antarmuka laporan & ekspor.
 
 ## 4. YANG BELUM / AKAN DATANG (UPCOMING PHASES)
 
@@ -151,12 +159,12 @@ Slice berikutnya (lihat Bagian 4) memilih laporan & ekspor sebelum frontend.
 - Layar buka shift & tutup shift (Laporan X & Laporan Z).
 - Antarmuka retur (cari struk, alokasi restockable/damaged, dialog refund dengan `Idempotency-Key`).
 
-### B. Fase 4 Backend — Laporan, Ekspor, & Audit Endpoint (Belum Dimulai)
-- **Laporan penjualan**: Net Sales tanpa pajak, PPN terkumpul, HPP (COGS), laba kotor estimasi. Wajib menyaring harga modal dari payload kasir.
-- **Laporan operasional**: produk terlaris, sisa stok, pergerakan kas shift, selisih kas.
-- **Ekspor XLSX/PDF** via `export_jobs` (antrean DB) dengan proteksi injeksi formula spreadsheet.
-- **Audit log endpoint**: tampilan aktivitas operasional & keamanan (owner/manager).
-- **Endpoint retur**: tetap merupakan area Fase 4 — slice retur sudah selesai di Backend, tinggal integrasi ke Frontend kasir.
+### B. Fase 4 Backend — Laporan, Ekspor, & Audit Endpoint (Selesai)
+- [x] **Laporan penjualan**: Net Sales tanpa pajak, PPN terkumpul, HPP (COGS), laba kotor estimasi. Harga modal tidak pernah dikirim ke kasir.
+- [x] **Laporan operasional**: produk terlaris, sisa stok & valuasi, selisih kas shift, ringkasan penerimaan & retur.
+- [x] **Ekspor XLSX/PDF** via `export_jobs` (antrean DB) dengan proteksi injeksi formula spreadsheet.
+- [x] **Audit log endpoint**: tampilan aktivitas operasional & keamanan (owner/manager).
+- Sisa pekerjaan: integrasi UI laporan/ekspor di Frontend (Fase 3 frontend).
 
 ### C. Fase 5 — Verifikasi Rilis & UAT (Release Verification)
 - UAT bersama pemilik toko menggunakan alur data riil.
@@ -173,12 +181,11 @@ Slice berikutnya (lihat Bagian 4) memilih laporan & ekspor sebelum frontend.
    git status
    git branch --show-current
    ```
-2. **Melanjutkan Backend (Fase 4 sisa: laporan/ekspor/audit)**:
-   - Tetap di branch `fase/backend`.
-   - Buat `ReportService` / `ExportService` / endpoint audit, daftarkan di `routes/api.php`, dan tambahkan test.
-   - Jalankan `podman exec kasir-backend php artisan test` (SQLite) dan smoke MySQL terisolasi untuk kasus konkurensi.
-   - Commit & push ke `fase/backend`, merge `--no-ff` ke `development`, push `development`, kembali ke `fase/backend`.
-3. **Beralih ke Frontend (Fase 3 frontend)**:
+2. **Backend Fase 4 (laporan/ekspor/audit) — sudah selesai**. Commit slice ini, push `fase/backend`, merge `--no-ff` ke `development`, push `development`, kembali ke `fase/backend`.
+   - Berkas baru: `backend/app/Services/{Report,Export}Service.php`, `backend/app/Support/{ReportDateRange.php,Export/{SpreadsheetEscaper,XlsxWriter,PdfWriter}.php}`, `backend/app/Jobs/GenerateExportJob.php`, `backend/app/Http/Controllers/Api/{Report,Export,AuditEvent}Controller.php`. Test: `backend/tests/Feature/ReportAndExportApiTest.php`. OpenAPI: `docs/api/openapi-phase4.yaml` (mirror ke `backend/docs/`).
+   - Verifikasi sebelum commit: `podman run ... php artisan test` (146 test / 767 assertion harus lulus).
+3. **Melanjutkan Backend Fase 5 / perbaikan**: tetap di `fase/backend`; tambahkan test untuk smoke konkurensi MySQL terisolasi untuk laporan/ekspor (jika belum) dan audit akses sebelum pindah.
+4. **Beralih ke Frontend (Fase 3 frontend)**:
    - Pindah ke `git checkout fase/frontend` (sudah ada setup `2a8f78a`).
-   - Bangun antarmuka kasir/retur sesuai Bagian 4A.
-4. **Selesai semua**: masuk Fase 5 (UAT, backup/restore, beban, audit keamanan) di Bagian 4C.
+   - Bangun antarmuka kasir/retur serta layar laporan/ekspor sesuai Bagian 4A/4B.
+5. **Selesai semua**: masuk Fase 5 (UAT, backup/restore, beban, audit keamanan) di Bagian 4C.
