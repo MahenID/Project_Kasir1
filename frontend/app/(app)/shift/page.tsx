@@ -285,10 +285,19 @@ function OpenShiftForm({ onOpened }: { onOpened: () => Promise<unknown> }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    terminalApi.list().then((t) => {
-      setTerminals(t);
-      if (t.length > 0) setTerminalId(t[0].id);
-    });
+    terminalApi
+      .list()
+      .then((t) => {
+        setTerminals(t);
+        if (t.length > 0) setTerminalId(t[0].id);
+      })
+      .catch((err) => {
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Gagal memuat daftar terminal. Muat ulang halaman."
+        );
+      });
   }, []);
 
   const submit = async () => {
