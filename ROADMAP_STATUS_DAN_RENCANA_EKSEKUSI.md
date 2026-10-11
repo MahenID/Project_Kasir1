@@ -139,8 +139,9 @@ Dokumen ini adalah ringkasan status resmi untuk pelacakan, audit, dan panduan ke
 
 Fase 3 & 4 Backend **sudah selesai dan teruji** di branch `fase/backend`:
 - Slice retur: endpoint HTTP lengkap, `ReturnService` atomik, migrasi normalisasi `restockable`/`damaged`, OpenAPI 4.
-- Slice laporan/ekspor/audit (commit baru): `ReportService` + 6 endpoint laporan, `ExportService` + antrean XLSX/PDF dengan proteksi injeksi formula & kedaluwarsa 24 jam, endpoint audit read-only ber-scope peran.
-- Seluruh backend Fase 3 & 4 lulus **146 test / 767 assertion** di SQLite; smoke konkurensi MySQL 8.4 untuk retur tetap **SMOKE PASS**.
+- Slice laporan/ekspor/audit (commit `c44a69d`): `ReportService` + 6 endpoint laporan, `ExportService` + antrean XLSX/PDF dengan proteksi injeksi formula & kedaluwarsa 24 jam, endpoint audit read-only ber-scope peran.
+- Slice MySQL 8.4 cross-DB smoke (commit berikutnya): 2 cacat ditemukan & diperbaiki — `ReportService::stockOnHand()` membaca kolom `minimum_stock` yang tidak ada (nama sebenarnya `min_stock`); SQLite diam-diam mengembalikan string literal untuk kolom tak dikenal sehingga bug tersembunyi, sedangkan MySQL menolak dengan `Column not found`. Kedua, satu test retur membandingkan urutan key respons idempoten; kolom `json` MySQL menormalkan urutan key saat menyimpan/membaca `response_snapshot`, jadi perbandingan kini dikanonikalisasi. Lulus **146 test / 767 assertion** di SQLite in-memory dan MySQL 8.4.11. Konfigurasi repeatable: `backend/phpunit.mysql.xml` dengan override env DB.
+- Queue worker database asli (`php artisan queue:work database`) terverifikasi: artefak XLSX 1745 byte dengan ZIP magic `504b0304`, status `completed`, `expires_at` +24 jam, tanpa error.
 
 Slice berikutnya (lihat Bagian 4) beralih ke Frontend kasir/retur serta antarmuka laporan & ekspor.
 
@@ -184,7 +185,7 @@ Slice berikutnya (lihat Bagian 4) beralih ke Frontend kasir/retur serta antarmuk
 2. **Backend Fase 4 (laporan/ekspor/audit) — sudah selesai**. Commit slice ini, push `fase/backend`, merge `--no-ff` ke `development`, push `development`, kembali ke `fase/backend`.
    - Berkas baru: `backend/app/Services/{Report,Export}Service.php`, `backend/app/Support/{ReportDateRange.php,Export/{SpreadsheetEscaper,XlsxWriter,PdfWriter}.php}`, `backend/app/Jobs/GenerateExportJob.php`, `backend/app/Http/Controllers/Api/{Report,Export,AuditEvent}Controller.php`. Test: `backend/tests/Feature/ReportAndExportApiTest.php`. OpenAPI: `docs/api/openapi-phase4.yaml` (mirror ke `backend/docs/`).
    - Verifikasi sebelum commit: `podman run ... php artisan test` (146 test / 767 assertion harus lulus).
-3. **Melanjutkan Backend Fase 5 / perbaikan**: tetap di `fase/backend`; tambahkan test untuk smoke konkurensi MySQL terisolasi untuk laporan/ekspor (jika belum) dan audit akses sebelum pindah.
+   - Verifikasi lintas database sebelum commit: jalankan MySQL 8.4 terpisah (contoh port 3307), lalu `DB_HOST=127.0.0.1 DB_PORT=3307 DB_DATABASE=smoke_test DB_USERNAME=smoke_user DB_PASSWORD=smoke_pass php artisan test --configuration phpunit.mysql.xml` (146 test / 767 assertion harus lulus).
 4. **Beralih ke Frontend (Fase 3 frontend)**:
    - Pindah ke `git checkout fase/frontend` (sudah ada setup `2a8f78a`).
    - Bangun antarmuka kasir/retur serta layar laporan/ekspor sesuai Bagian 4A/4B.
