@@ -158,7 +158,7 @@ Slice Frontend Fase 3 & 4 (commit `6f1dffd` di `fase/frontend`, di-merge ke `dev
 - [x] **Audit log** (`/audit`, guard owner|manager): paginated (per_page 20), filter `log_name`, modal detail viewer JSON `properties`.
 - [x] **Konvensi UI**: mata uang integer IDR (`Math.round` + `Intl.NumberFormat('id-ID')`, zona `Asia/Makassar`), target sentuh ≥44px (`touch-target`), label Indonesia, kasir tidak pernah melihat field harga modal/margin.
 - [x] **Verifikasi**: `tsc --noEmit` (0 error), `eslint .` (0 error/0 warning), `next build` sukses (10 rute statis + 1 dinamis `/receipt/[id]`). Smoke test live (podman-compose + `next dev` port 3001): CSRF → login owner → `/auth/me` → products → shifts/current → audit-events → exports → `GET /pos` semuanya `200 OK` dengan cookie sesi via proxy rewrite Next.js.
-- [ ] **Gap backend**: `GET /api/v1/terminals` belum ada; `lib/api/shift.ts` sementara memakai daftar terminal fallback sesuai `TerminalSeeder` (POS-01, POS-02). Rencana penambahan endpoint pada fase perbaikan berikutnya.
+- [x] **Gap backend ditutup**: `GET /api/v1/terminals` kini tersedia (`TerminalController@index`, route di dalam `auth:sanctum`). Default hanya terminal aktif; `?active_only=false` menampilkan semua (aktif + non-aktif). `lib/api/shift.ts` sudah memakai endpoint riil tanpa fallback hardcoded, dengan penanganan error saat gagal memuat. Test `backend/tests/Feature/TerminalApiTest.php` (4 kasus) lulus; suite lengkap **150 test / 785 assertion** lulus.
 
 ### B. Fase 4 Backend — Laporan, Ekspor, & Audit Endpoint (Selesai)
 - [x] **Laporan penjualan**: Net Sales tanpa pajak, PPN terkumpul, HPP (COGS), laba kotor estimasi. Harga modal tidak pernah dikirim ke kasir.
@@ -190,5 +190,5 @@ Slice Frontend Fase 3 & 4 (commit `6f1dffd` di `fase/frontend`, di-merge ke `dev
    - Halaman: `/pos`, `/receipt/[id]`, `/sales`, `/shift`, `/returns`, `/reports`, `/audit`, `/login`.
    - Lib: `lib/api.ts` (Sanctum CSRF single-flight, session cookie, idempotency UUID), `lib/api/{auth,pos,sales,shift,returns,reports,terminals,audit-events}.ts`, `lib/types.ts`, `lib/auth-context.tsx`.
    - Verifikasi: `tsc --noEmit`, `eslint .`, `next build` (semuanya lulus), smoke test live melalui podman-compose.
-   - **Gap backend terbuka**: tambahkan `GET /api/v1/terminals` dan hapus fallback hardcoded di `lib/api/shift.ts`.
+   - **Gap backend tertutup**: `GET /api/v1/terminals` sudah ditambahkan; fallback hardcoded di `lib/api/shift.ts` sudah dihapus.
 5. **Selesai semua**: masuk Fase 5 (UAT, backup/restore, beban, audit keamanan) di Bagian 4C.
