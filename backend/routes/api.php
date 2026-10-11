@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\ReceivingController;
 use App\Http\Controllers\Api\SaleController;
 use App\Http\Controllers\Api\ShiftController;
 use App\Http\Controllers\Api\StocktakeController;
+use App\Http\Controllers\Api\ReturnRequestController;
 use App\Support\ApiResponse;
 use Illuminate\Support\Facades\Route;
 
@@ -67,6 +68,17 @@ Route::prefix('v1')->group(function () {
 
         // Operation Key Recovery
         Route::get('/operations/{operation}/{key}', [OperationRecoveryController::class, 'recoverOperation']);
+
+        Route::prefix('return-requests')->group(function () {
+            Route::get('/', [ReturnRequestController::class, 'index']);
+            Route::get('/lookup', [ReturnRequestController::class, 'lookup']);
+            Route::post('/', [ReturnRequestController::class, 'store']);
+            Route::get('/{returnRequest}', [ReturnRequestController::class, 'show'])->whereNumber('returnRequest');
+            Route::post('/{returnRequest}/approve', [ReturnRequestController::class, 'approve'])->whereNumber('returnRequest');
+            Route::post('/{returnRequest}/reject', [ReturnRequestController::class, 'reject'])->whereNumber('returnRequest');
+            Route::post('/{returnRequest}/cancel', [ReturnRequestController::class, 'cancel'])->whereNumber('returnRequest');
+            Route::post('/{returnRequest}/complete', [ReturnRequestController::class, 'complete'])->whereNumber('returnRequest');
+        });
 
         // Receivings (Phase 4 — Operational Completeness: Inventory)
         Route::prefix('receivings')->group(function () {

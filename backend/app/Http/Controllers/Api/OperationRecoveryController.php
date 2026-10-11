@@ -7,6 +7,7 @@ use App\Services\IdempotencyService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class OperationRecoveryController extends Controller
 {
@@ -30,6 +31,10 @@ class OperationRecoveryController extends Controller
      */
     public function recoverOperation(Request $request, string $operation, string $key): JsonResponse
     {
+        validator(['operation' => $operation, 'key' => $key], [
+            'operation' => ['required', Rule::in(['checkout', 'refund-complete'])],
+            'key' => ['required', 'uuid'],
+        ])->validate();
         $user = $request->user();
         $lookup = $this->idempotencyService->lookup($user->id, $operation, $key);
 
