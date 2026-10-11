@@ -33,7 +33,7 @@ return new class extends Migration
             $table->foreignId('return_request_id')->constrained('return_requests')->cascadeOnDelete();
             $table->foreignId('sale_item_id')->constrained('sale_items')->restrictOnDelete();
             $table->unsignedInteger('quantity');
-            $table->string('disposition', 20)->default('restock'); // 'restock', 'damaged', 'discarded'
+            $table->string('disposition', 20)->default('restockable');
             $table->text('reason');
             $table->unsignedBigInteger('refund_net_amount')->nullable();
             $table->unsignedBigInteger('refund_tax_amount')->nullable();

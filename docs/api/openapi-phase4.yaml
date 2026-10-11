@@ -44,7 +44,15 @@ tags:
     description: >
       Customer master data (FR-CUST-01). All roles search/create; editing and
       archival are owner/manager only. No loyalty points.
-
+  - name: Returns
+    description: >
+      Return requests and refunds (FR-RET-01..04). Two-step workflow:
+      cashier creates a return request against a completed sale, a supervisor
+      with `manage-returns` approves or rejects, and completion atomically
+      restocks eligible units, records a refund tied to the handling shift's
+      drawer, and persists the operation via `Idempotency-Key`. Owner may
+      override the 7-day return window with a documented reason. Cost fields
+      and damaged-unit restock are excluded from the cashier payload.
 paths:
   /api/v1/receivings:
     get:
@@ -974,6 +982,140 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/return-requests:
+    get:
+      summary: List returns (cashier own requests; supervisors all)
+      tags: [Returns]
+      responses:
+        '200': { description: Paginated return payloads; cashier cost fields excluded }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Request immutable return lines against original sale snapshots
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sale_id, reason, lines]
+              properties:
+                sale_id: { type: integer, minimum: 1 }
+                reason: { type: string }
+                override_reason: { type: [string, 'null'], description: Required owner-only reason outside the store calendar return window }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [sale_item_id, quantity, disposition, reason]
+                    properties:
+                      sale_item_id: { type: integer, minimum: 1 }
+                      quantity: { type: integer, minimum: 1 }
+                      disposition: { type: string, enum: [restockable, damaged] }
+                      reason: { type: string }
+      responses:
+        '201': { description: Requested return; unallocated amounts are null }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Return window or remaining quantity conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/return-requests/lookup:
+    get:
+      summary: Exact receipt lookup for returns, including another cashier's sale
+      tags: [Returns]
+      parameters:
+        - in: query
+          name: receipt_number
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Original safe line snapshots and remaining quantities; no customer personal data or cashier costs }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/return-requests/{returnRequest}:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    get:
+      summary: Read return (cashier owner or supervisor)
+      tags: [Returns]
+      responses:
+        '200': { description: Return with allocated integer-rupiah strings and optional supervisor cost fields }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/return-requests/{returnRequest}/approve:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Supervisor approval bound to immutable contents for 24 hours; expired approvals can be renewed
+      tags: [Returns]
+      responses:
+        '200': { description: Approved return and expiry }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Invalid approval state }
+  /api/v1/return-requests/{returnRequest}/reject:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Supervisor rejects a requested return
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Rejected return without financial posting }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Invalid rejection state }
+  /api/v1/return-requests/{returnRequest}/cancel:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Request owner or supervisor cancels an uncompleted return
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Cancelled return without financial posting }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Completed returns are immutable }
+  /api/v1/return-requests/{returnRequest}/complete:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Atomically complete approved return and manually confirmed refund
+      tags: [Returns]
+      description: >
+        Own open handling shift required. Cumulative original snapshot allocation;
+        restockable restores original cost, damaged does not restore stock or COGS.
+        Inventory pause, concurrent remaining quantities and approval authority are
+        rechecked. Idempotency scope is user/refund-complete/key; identical retries
+        return the original safe snapshot, changed payloads conflict. Recover unknown
+        outcomes through GET /api/v1/operations/refund-complete/{key} before any second refund.
+      parameters:
+        - { in: header, name: Idempotency-Key, schema: { type: string, format: uuid }, description: Required here or as idempotency_key in body }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shift_id]
+              properties:
+                shift_id: { type: integer, minimum: 1 }
+                confirmed_cash_amount: { type: [integer, 'null'], minimum: 0, description: Cash refund requires exact allocated total }
+                refund_reference: { type: [string, 'null'], description: Noncash original method requires external refund reference }
+                non_cash_confirmed: { type: boolean, description: Must be true for manual noncash completion }
+                idempotency_key: { type: string, format: uuid }
+      responses:
+        '200': { description: Safe completed return snapshot with string-valued rupiah amounts }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Approval, shift, stocktake, remaining quantity, or idempotency conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
 components:
   securitySchemes:

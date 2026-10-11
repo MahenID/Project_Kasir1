@@ -1,0 +1,1666 @@
+openapi: 3.1.0
+info:
+  title: DragonMart POS API — Phase 4 Operational Completeness Contract
+  version: 4.0.0
+  description: >
+    API Contract for DragonMart POS Phase 4 — Operational Completeness.
+    Covers the Receiving (Penerimaan Barang) lifecycle: draft, line edits,
+    approval, atomic stock & moving-average-cost posting, and cancellation.
+    State machine: draft -> approved -> posted, or -> cancelled at any
+    pre-posted stage. Only the POST endpoint mutates stock and writes
+    the immutable stock_movements ledger; draft and approval are free of
+    side effects beyond row creation.
+
+servers:
+  - url: http://localhost:8000
+    description: Direct Backend Server
+  - url: http://localhost:3000
+    description: Frontend Reverse Proxy Origin
+
+tags:
+  - name: Receivings
+    description: >
+      Receiving documents (penerimaan barang). Only `posted` documents
+      increment stock and update the moving weighted-average cost.
+  - name: InventoryAdjustments
+    description: >
+      Inventory adjustments (penyesuaian stok & revaluasi biaya modal).
+      Two document types share the same state machine: quantity (signed
+      quantity_delta per line) and revaluation (owner-only new_average_cost
+      per line). Only `posted` documents mutate stock or cost.
+  - name: Categories
+    description: >
+      Category master data (FR-PROD-01). Unique auto-generated slug; archival
+      blocked while active products remain.
+  - name: Products
+    description: >
+      Product master data (FR-PROD-02/03/04, FR-MEDIA-01). Stock and average
+      cost are read-only in product CRUD; they change only via posted inventory
+      documents. Selling-price changes bump commercial_version (stale quotes).
+      Cost fields are omitted from cashier responses.
+  - name: Suppliers
+    description: Supplier master data (FR-SUPP-01). Owner/manager only.
+  - name: Customers
+    description: >
+      Customer master data (FR-CUST-01). All roles search/create; editing and
+      archival are owner/manager only. No loyalty points.
+  - name: Returns
+    description: >
+      Return requests and refunds (FR-RET-01..04). Two-step workflow:
+      cashier creates a return request against a completed sale, a supervisor
+      with `manage-returns` approves or rejects, and completion atomically
+      restocks eligible units, records a refund tied to the handling shift's
+      drawer, and persists the operation via `Idempotency-Key`. Owner may
+      override the 7-day return window with a documented reason. Cost fields
+      and damaged-unit restock are excluded from the cashier payload.
+paths:
+  /api/v1/receivings:
+    get:
+      summary: List receiving documents
+      description: >
+        Returns receiving documents in reverse insertion order. Inventory
+        managers see all documents; non-inventory users (cashiers) are
+        limited to documents they themselves created.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, approved, posted, cancelled]
+          required: false
+          description: Filter by document status.
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Paginated list of receiving documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingListResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create a new draft receiving
+      description: >
+        Creates a new receiving document in `draft` status. The optional
+        `items` array seeds initial line items; otherwise the document is
+        created empty and lines can be added via PUT /receivings/{id}/lines.
+        Drafts have no stock or cost effect.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReceivingRequest'
+      responses:
+        '201':
+          description: Draft receiving created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/receivings/{receiving}:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    get:
+      summary: Get a single receiving document
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Receiving detail with line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/receivings/{receiving}/lines:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    put:
+      summary: Replace the entire line set on a draft receiving
+      description: >
+        Atomically replaces all line items. Only allowed while the document
+        is in `draft` status; once approved or posted, lines are frozen.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReceivingLinesRequest'
+      responses:
+        '200':
+          description: Lines replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/receivings/{receiving}/approve:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Freeze the line set and mark the document as approved
+      description: >
+        Requires the `manage-inventory` permission (owner/manager). After
+        approval, the line set is frozen; the document can be posted or
+        cancelled but no longer edited.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Document approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Document has no line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/receivings/{receiving}/post:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Post an approved receiving
+      description: >
+        Executes the receiving atomically: locks products in ascending ID
+        order, increments stock for each line, recalculates the moving
+        weighted-average cost, writes the immutable `stock_movements`
+        ledger, and marks the document as `posted`. Inventory is rejected
+        while a stocktake is in progress (`INVENTORY_FROZEN`).
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Document posted; stock and cost updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in approved status, or inventory frozen
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/receivings/{receiving}/cancel:
+    parameters:
+      - in: path
+        name: receiving
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Cancel a draft or approved receiving
+      description: >
+        Cancels a pre-posted document. Posted documents cannot be cancelled;
+        create a correction via `inventory_adjustments` instead. The
+        optional `notes` field is recorded on the document for audit.
+      tags: [Receivings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelReceivingRequest'
+      responses:
+        '200':
+          description: Document cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks manage-inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is already posted or cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/inventory-adjustments:
+    get:
+      summary: List inventory adjustment documents
+      tags: [InventoryAdjustments]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [quantity, revaluation]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, posted, cancelled]
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Paginated list of adjustment documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdjustmentListResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create a draft adjustment (quantity or revaluation)
+      description: >
+        Quantity adjustments require `manage-inventory` (owner/manager).
+        Revaluation requires `revalue-inventory-cost` (owner only). The
+        line shape differs per type: quantity uses `quantity_delta` (signed
+        integer, non-zero); revaluation uses `new_average_cost` (>= 0).
+      tags: [InventoryAdjustments]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdjustmentRequest'
+      responses:
+        '201':
+          description: Draft adjustment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdjustmentResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks required permission for the chosen type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/inventory-adjustments/{adjustment}:
+    parameters:
+      - in: path
+        name: adjustment
+        required: true
+        schema:
+          type: integer
+    get:
+      summary: Get a single adjustment document
+      tags: [InventoryAdjustments]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Adjustment detail with line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdjustmentResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/inventory-adjustments/{adjustment}/post:
+    parameters:
+      - in: path
+        name: adjustment
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Post a draft adjustment atomically
+      description: >
+        Quantity adjustments increment or decrement stock via StockService
+        and write an `adjustment_quantity` stock_movements ledger entry.
+        Revaluation overwrites `product.average_cost` and writes an
+        `adjustment_revaluation` ledger entry with quantity 0 (stock
+        unchanged). Both require the same authorization as create.
+      tags: [InventoryAdjustments]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Adjustment posted; stock and/or cost updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdjustmentResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller lacks required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status, or insufficient stock
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Document has no line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/inventory-adjustments/{adjustment}/cancel:
+    parameters:
+      - in: path
+        name: adjustment
+        required: true
+        schema:
+          type: integer
+    post:
+      summary: Cancel a draft adjustment
+      description: >
+        Posted adjustments are immutable; create a correction document
+        instead. Cancellation never touches stock or cost.
+      tags: [InventoryAdjustments]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Adjustment cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdjustmentResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Document is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /api/v1/categories:
+    get:
+      summary: List categories
+      description: Available to all authenticated roles. Optional `search`, `active_only`.
+      operationId: listCategories
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Category list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Create category
+      description: manage-catalog permission. Slug is auto-generated and uniquified.
+      operationId: createCategory
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+                is_active: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/categories/{category}:
+    parameters:
+      - { in: path, name: category, required: true, schema: { type: integer } }
+    get:
+      summary: Get category detail
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Category detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update category
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CATEGORY_IN_USE — active products still reference this category (AC-36)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/categories/{category}/archive:
+    parameters:
+      - { in: path, name: category, required: true, schema: { type: integer } }
+    post:
+      summary: Archive (deactivate) category
+      description: Rejected with CATEGORY_IN_USE while active products remain.
+      tags: [Categories]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Category archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CATEGORY_IN_USE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/products:
+    get:
+      summary: Search products (FR-PROD-03/04)
+      description: >
+        Filters: `search` (SKU/barcode/name), `barcode` (exact, leading zeros
+        preserved), `category_id`, `active_only`, `low_stock` (stock <= min).
+        Cashier responses omit average_cost and commercial_version.
+      operationId: listProducts
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: barcode, schema: { type: string } }
+        - { in: query, name: category_id, schema: { type: integer } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+        - { in: query, name: low_stock, schema: { type: boolean } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Product list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create product (multipart for image)
+      description: >
+        manage-catalog permission. stock/average_cost are NOT accepted — new
+        products start at zero. Image: JPEG/PNG/WebP <=5 MB, content-verified
+        (AC-33); invalid content rejected 422 IMAGE_INVALID_CONTENT, oversized
+        413 IMAGE_TOO_LARGE (after passing the 5 MB form rule), corrupt
+        processing leaves no product/product change.
+      operationId: createProduct
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [sku, name, category_id, selling_price]
+              properties:
+                sku: { type: string, maxLength: 64 }
+                barcode: { type: string, maxLength: 64, nullable: true }
+                name: { type: string, maxLength: 200 }
+                description: { type: string, nullable: true }
+                category_id: { type: integer }
+                preferred_supplier_id: { type: integer, nullable: true }
+                unit: { type: string, maxLength: 30, default: pcs }
+                selling_price: { type: integer, minimum: 0, description: Whole rupiah }
+                min_stock: { type: integer, minimum: 0, default: 0 }
+                is_active: { type: boolean, default: true }
+                image: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              required: [sku, name, category_id, selling_price]
+              properties:
+                sku: { type: string }
+                name: { type: string }
+                category_id: { type: integer }
+                selling_price: { type: integer, minimum: 0 }
+      responses:
+        '201':
+          description: Product created (zero stock/cost)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: PRODUCT_SKU_TAKEN / PRODUCT_BARCODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: IMAGE_TOO_LARGE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/products/{product}:
+    parameters:
+      - { in: path, name: product, required: true, schema: { type: integer } }
+    get:
+      summary: Get product detail
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Product detail (cost fields only for view-costs holders)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update product
+      description: >
+        Partial update. Selling-price change increments commercial_version so
+        outstanding quotes fail checkout with QUOTE_STALE. stock/average_cost
+        are not writable here.
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                sku: { type: string }
+                barcode: { type: string, nullable: true }
+                name: { type: string }
+                description: { type: string, nullable: true }
+                category_id: { type: integer }
+                preferred_supplier_id: { type: integer, nullable: true }
+                unit: { type: string }
+                selling_price: { type: integer, minimum: 0 }
+                min_stock: { type: integer, minimum: 0 }
+                is_active: { type: boolean }
+                image: { type: string, format: binary }
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: PRODUCT_SKU_TAKEN / PRODUCT_BARCODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/products/{product}/archive:
+    parameters:
+      - { in: path, name: product, required: true, schema: { type: integer } }
+    post:
+      summary: Archive (deactivate) product
+      tags: [Products]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Product archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/suppliers:
+    get:
+      summary: List suppliers
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: active_only, schema: { type: boolean } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Supplier list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, maxLength: 50 }
+                name: { type: string, maxLength: 150 }
+                contact_person: { type: string, nullable: true }
+                phone: { type: string, nullable: true }
+                email: { type: string, format: email, nullable: true }
+                address: { type: string, nullable: true }
+                is_active: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Supplier created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: SUPPLIER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/suppliers/{supplier}:
+    parameters:
+      - { in: path, name: supplier, required: true, schema: { type: integer } }
+    get:
+      summary: Get supplier detail
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Supplier detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Supplier updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: SUPPLIER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/suppliers/{supplier}/archive:
+    parameters:
+      - { in: path, name: supplier, required: true, schema: { type: integer } }
+    post:
+      summary: Archive deactivate supplier
+      tags: [Suppliers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Supplier archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/customers:
+    get:
+      summary: Search active customers (cashier-facing)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: per_page, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200':
+          description: Customer list (paginated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerListResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Add customer (any role, e.g. during checkout)
+      description: Code auto-generated as CUST-### when omitted.
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                code: { type: string, maxLength: 50, nullable: true }
+                name: { type: string, maxLength: 150 }
+                phone: { type: string, nullable: true }
+                email: { type: string, format: email, nullable: true }
+                address: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: CUSTOMER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{customer}:
+    parameters:
+      - { in: path, name: customer, required: true, schema: { type: integer } }
+    get:
+      summary: Get customer detail
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Customer detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update customer (owner/manager only)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Customer updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: CUSTOMER_FORBIDDEN — cashier may not edit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CUSTOMER_CODE_TAKEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/customers/{customer}/archive:
+    parameters:
+      - { in: path, name: customer, required: true, schema: { type: integer } }
+    post:
+      summary: Archive customer (owner/manager)
+      tags: [Customers]
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Customer archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerResponseEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: CUSTOMER_FORBIDDEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/return-requests:
+    get:
+      summary: List returns (cashier own requests; supervisors all)
+      tags: [Returns]
+      responses:
+        '200': { description: Paginated return payloads; cashier cost fields excluded }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Request immutable return lines against original sale snapshots
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sale_id, reason, lines]
+              properties:
+                sale_id: { type: integer, minimum: 1 }
+                reason: { type: string }
+                override_reason: { type: [string, 'null'], description: Required owner-only reason outside the store calendar return window }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [sale_item_id, quantity, disposition, reason]
+                    properties:
+                      sale_item_id: { type: integer, minimum: 1 }
+                      quantity: { type: integer, minimum: 1 }
+                      disposition: { type: string, enum: [restockable, damaged] }
+                      reason: { type: string }
+      responses:
+        '201': { description: Requested return; unallocated amounts are null }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Return window or remaining quantity conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/return-requests/lookup:
+    get:
+      summary: Exact receipt lookup for returns, including another cashier's sale
+      tags: [Returns]
+      parameters:
+        - in: query
+          name: receipt_number
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Original safe line snapshots and remaining quantities; no customer personal data or cashier costs }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/return-requests/{returnRequest}:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    get:
+      summary: Read return (cashier owner or supervisor)
+      tags: [Returns]
+      responses:
+        '200': { description: Return with allocated integer-rupiah strings and optional supervisor cost fields }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/return-requests/{returnRequest}/approve:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Supervisor approval bound to immutable contents for 24 hours; expired approvals can be renewed
+      tags: [Returns]
+      responses:
+        '200': { description: Approved return and expiry }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Invalid approval state }
+  /api/v1/return-requests/{returnRequest}/reject:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Supervisor rejects a requested return
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Rejected return without financial posting }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Invalid rejection state }
+  /api/v1/return-requests/{returnRequest}/cancel:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Request owner or supervisor cancels an uncompleted return
+      tags: [Returns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Cancelled return without financial posting }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Completed returns are immutable }
+  /api/v1/return-requests/{returnRequest}/complete:
+    parameters:
+      - { in: path, name: returnRequest, required: true, schema: { type: integer } }
+    post:
+      summary: Atomically complete approved return and manually confirmed refund
+      tags: [Returns]
+      description: >
+        Own open handling shift required. Cumulative original snapshot allocation;
+        restockable restores original cost, damaged does not restore stock or COGS.
+        Inventory pause, concurrent remaining quantities and approval authority are
+        rechecked. Idempotency scope is user/refund-complete/key; identical retries
+        return the original safe snapshot, changed payloads conflict. Recover unknown
+        outcomes through GET /api/v1/operations/refund-complete/{key} before any second refund.
+      parameters:
+        - { in: header, name: Idempotency-Key, schema: { type: string, format: uuid }, description: Required here or as idempotency_key in body }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shift_id]
+              properties:
+                shift_id: { type: integer, minimum: 1 }
+                confirmed_cash_amount: { type: [integer, 'null'], minimum: 0, description: Cash refund requires exact allocated total }
+                refund_reference: { type: [string, 'null'], description: Noncash original method requires external refund reference }
+                non_cash_confirmed: { type: boolean, description: Must be true for manual noncash completion }
+                idempotency_key: { type: string, format: uuid }
+      responses:
+        '200': { description: Safe completed return snapshot with string-valued rupiah amounts }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Approval, shift, stocktake, remaining quantity, or idempotency conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: laravel-session
+
+  responses:
+    Unauthorized:
+      description: Unauthenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    MetaEnvelope:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+      required: [request_id]
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message, fields]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+            fields:
+              type: object
+              additionalProperties: true
+        meta:
+          $ref: '#/components/schemas/MetaEnvelope'
+
+    ReceivingLine:
+      type: object
+      required: [id, product_id, quantity, unit_cost, extended_cost]
+      properties:
+        id:
+          type: integer
+        product_id:
+          type: integer
+        product_name:
+          type: string
+          nullable: true
+        product_sku:
+          type: string
+          nullable: true
+        quantity:
+          type: integer
+          minimum: 1
+        unit_cost:
+          type: integer
+          description: Whole rupiah, integer for the API response (stored as DECIMAL(20,6))
+        extended_cost:
+          type: integer
+
+    Receiving:
+      type: object
+      required:
+        - id
+        - receiving_number
+        - type
+        - status
+        - items
+        - totals
+      properties:
+        id:
+          type: integer
+        receiving_number:
+          type: string
+          example: RCV-20261009-00001
+        type:
+          type: string
+          enum: [purchase, opening]
+        status:
+          type: string
+          enum: [draft, approved, posted, cancelled]
+        supplier:
+          nullable: true
+          type: object
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+        external_reference:
+          type: string
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        posted_by:
+          nullable: true
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        correction_notes:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceivingLine'
+        totals:
+          type: object
+          required: [total_quantity, total_extended_cost]
+          properties:
+            total_quantity:
+              type: integer
+            total_extended_cost:
+              type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReceivingListItem:
+      type: object
+      required: [id, receiving_number, type, status, created_at]
+      properties:
+        id: { type: integer }
+        receiving_number: { type: string }
+        type: { type: string, enum: [purchase, opening] }
+        status: { type: string, enum: [draft, approved, posted, cancelled] }
+        supplier_id: { type: integer, nullable: true }
+        supplier_name: { type: string, nullable: true }
+        external_reference: { type: string, nullable: true }
+        received_at: { type: string, format: date-time, nullable: true }
+        created_by: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreateReceivingRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [purchase, opening]
+        supplier_id:
+          type: integer
+          nullable: true
+        external_reference:
+          type: string
+          maxLength: 100
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            required: [product_id, quantity, unit_cost]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+              unit_cost: { type: number, minimum: 0 }
+
+    UpdateReceivingLinesRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, quantity, unit_cost]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+              unit_cost: { type: number, minimum: 0 }
+
+    CancelReceivingRequest:
+      type: object
+      properties:
+        notes:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    AdjustmentLine:
+      type: object
+      required: [id, product_id, before_stock, after_stock]
+      properties:
+        id: { type: integer }
+        product_id: { type: integer }
+        product_name: { type: string, nullable: true }
+        product_sku: { type: string, nullable: true }
+        quantity_delta:
+          type: integer
+          nullable: true
+          description: Signed delta for type=quantity; null for type=revaluation
+        current_average_cost:
+          type: integer
+          nullable: true
+        new_average_cost:
+          type: integer
+          nullable: true
+          description: New cost for type=revaluation; null for type=quantity
+        before_stock: { type: integer }
+        after_stock: { type: integer }
+
+    Adjustment:
+      type: object
+      required:
+        - id
+        - adjustment_number
+        - type
+        - status
+        - reason
+        - items
+      properties:
+        id: { type: integer }
+        adjustment_number: { type: string, example: ADJ-20261009-00001 }
+        type: { type: string, enum: [quantity, revaluation] }
+        status: { type: string, enum: [draft, posted, cancelled] }
+        reason: { type: string }
+        evidence_reference: { type: string, nullable: true }
+        created_by:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        posted_by:
+          nullable: true
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        posted_at: { type: string, format: date-time, nullable: true }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AdjustmentLine' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AdjustmentListItem:
+      type: object
+      required: [id, adjustment_number, type, status, reason, created_at]
+      properties:
+        id: { type: integer }
+        adjustment_number: { type: string }
+        type: { type: string, enum: [quantity, revaluation] }
+        status: { type: string, enum: [draft, posted, cancelled] }
+        reason: { type: string }
+        evidence_reference: { type: string, nullable: true }
+        created_by: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        posted_at: { type: string, format: date-time, nullable: true }
+
+    CreateAdjustmentRequest:
+      type: object
+      required: [type, reason, items]
+      properties:
+        type: { type: string, enum: [quantity, revaluation] }
+        reason: { type: string, minLength: 5, maxLength: 500 }
+        evidence_reference: { type: string, maxLength: 150, nullable: true }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id]
+            properties:
+              product_id: { type: integer }
+              quantity_delta:
+                type: integer
+                description: Required when type=quantity; signed, non-zero
+              new_average_cost:
+                type: number
+                minimum: 0
+                description: Required when type=revaluation
+
+    AdjustmentResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Adjustment' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    AdjustmentListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AdjustmentListItem' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Pagination:
+      type: object
+      required: [current_page, per_page, total, last_page]
+      properties:
+        current_page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        last_page: { type: integer }
+
+    ReceivingResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Receiving' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    ReceivingListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReceivingListItem' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Category:
+      type: object
+      required: [id, name, slug, is_active, products_count]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        is_active: { type: boolean }
+        products_count: { type: integer }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    CategoryResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Category' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    CategoryListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    Product:
+      type: object
+      required: [id, sku, name, selling_price, stock, min_stock, is_active, is_low_stock]
+      properties:
+        id: { type: integer }
+        sku: { type: string }
+        barcode: { type: string, nullable: true, description: Leading zeros preserved }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        unit: { type: string }
+        selling_price: { type: integer, description: Whole rupiah }
+        stock: { type: integer, description: Read-only; mutated only by posted documents }
+        min_stock: { type: integer }
+        is_active: { type: boolean }
+        is_low_stock: { type: boolean, description: stock <= min_stock (FR-PROD-04) }
+        image_url: { type: string, nullable: true }
+        category:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            slug: { type: string }
+        preferred_supplier:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            code: { type: string }
+            name: { type: string }
+        average_cost:
+          type: string
+          description: DECIMAL(20,6) string. Present only for view-costs holders (never cashiers).
+        commercial_version:
+          type: integer
+          description: Present only for view-costs holders. Bumped by price changes.
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    ProductResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Product' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    ProductListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Supplier:
+      type: object
+      required: [id, code, name, is_active]
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        contact_person: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    SupplierResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Supplier' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    SupplierListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Supplier' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Customer:
+      type: object
+      required: [id, code, name, is_active]
+      properties:
+        id: { type: integer }
+        code: { type: string, description: 'Auto-generated CUST-### when omitted' }
+        name: { type: string }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    CustomerResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data: { $ref: '#/components/schemas/Customer' }
+        message: { type: string }
+        meta: { $ref: '#/components/schemas/MetaEnvelope' }
+
+    CustomerListResponseEnvelope:
+      type: object
+      required: [success, data, message, meta]
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
+        message: { type: string }
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/MetaEnvelope'
+            - type: object
+              properties:
+                pagination: { $ref: '#/components/schemas/Pagination' }
