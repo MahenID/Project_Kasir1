@@ -143,22 +143,22 @@ Fase 3 & 4 Backend **sudah selesai dan teruji** di branch `fase/backend`:
 - Slice MySQL 8.4 cross-DB smoke (commit berikutnya): 2 cacat ditemukan & diperbaiki — `ReportService::stockOnHand()` membaca kolom `minimum_stock` yang tidak ada (nama sebenarnya `min_stock`); SQLite diam-diam mengembalikan string literal untuk kolom tak dikenal sehingga bug tersembunyi, sedangkan MySQL menolak dengan `Column not found`. Kedua, satu test retur membandingkan urutan key respons idempoten; kolom `json` MySQL menormalkan urutan key saat menyimpan/membaca `response_snapshot`, jadi perbandingan kini dikanonikalisasi. Lulus **146 test / 767 assertion** di SQLite in-memory dan MySQL 8.4.11. Konfigurasi repeatable: `backend/phpunit.mysql.xml` dengan override env DB.
 - Queue worker database asli (`php artisan queue:work database`) terverifikasi: artefak XLSX 1745 byte dengan ZIP magic `504b0304`, status `completed`, `expires_at` +24 jam, tanpa error.
 
-Slice berikutnya (lihat Bagian 4) beralih ke Frontend kasir/retur serta antarmuka laporan & ekspor.
+Slice Frontend Fase 3 & 4 (commit `6f1dffd` di `fase/frontend`, di-merge ke `development`) telah selesai: seluruh halaman kasir, struk/reprint, shift X/Z, retur, laporan/ekspor, dan audit log terimplementasi dan lolos `tsc`/`eslint`/`next build` serta smoke test live end-to-end via proxy Next.js (login → products → shift → audit → exports → `/pos` semuanya `200 OK`).
 
 ## 4. YANG BELUM / AKAN DATANG (UPCOMING PHASES)
 
-### A. Fase 3 Frontend (`fase/frontend`) — Antarmuka Kasir (POS Interface)
-- Belum dimulai di luar setup `2a8f78a` (Node 24 + reverse proxy `/api/*`, `/sanctum/*`, `/auth/*`).
-- Konfigurasi antarmuka kasir Next.js 16 (layout desktop/tablet landscape, touch target min 44x44px).
-- Input pencarian produk & pemindai barcode keyboard/scanner (fokus otomatis, pemindaian berulang menambah kuantitas item).
-- Keranjang belanja kasir (cart) dengan estimasi lokal dan sinkronisasi ke server quote.
-- Dialog pembayaran:
-  - Pembayaran Tunai (input uang diterima & hitung kembalian cepat).
-  - Pembayaran Non-Tunai Manual (QRIS, EDC, Transfer) dengan label konfirmasi manual dan input nomor referensi.
-- Dialog pratinjau dan cetak struk (layout browser 58mm/80mm).
-- Pemulihan transaksi jika koneksi terputus menggunakan `Idempotency-Key` yang tersimpan lokal (non-sensitif).
-- Layar buka shift & tutup shift (Laporan X & Laporan Z).
-- Antarmuka retur (cari struk, alokasi restockable/damaged, dialog refund dengan `Idempotency-Key`).
+### A. Fase 3 Frontend (`fase/frontend`) — Antarmuka Kasir (POS Interface) — SELESAI
+- [x] **Setup & proxy** (`2a8f78a`): Next.js 16 App Router + TypeScript + Tailwind v4 di Node 24; `next.config.ts` mem-proxy `/api/*`, `/sanctum/*`, `/auth/*` ke backend via `INTERNAL_API_URL` (cookie first-party, tanpa bearer token).
+- [x] **Shell & autentikasi**: `AuthProvider` + `useAuth` dengan route guard (redirect `/login` atau `/pos`), `CashierShell` (badge DM, indikator shift aktif, navigasi tab difilter supervisor-only, konfirmasi logout), halaman `/login` dan root redirect.
+- [x] **Kasir POS 2-kolom** (`/pos`, tablet-landscape): pencarian produk debounced 300ms + deteksi barcode (≥8 digit) dengan exact-match prioritas, keranjang dengan estimasi lokal, quote server auto-refresh tiap 120 detik (`REFRESH_AHEAD_MS=15_000`) dengan rotasi `Idempotency-Key` saat tanda tangan keranjang berubah (handling `409 IDEMPOTENCY_CONFLICT` & `QUOTE_CHANGED`), dialog pembayaran (tunai/debit/kredit/qris/transfer) dengan kalkulator kembalian, modal sukses bertaut cetak struk.
+- [x] **Struk & reprint** (`/receipt/[id]`): layout 80mm mono `window.print()`, penandaan **SALINAN** untuk reprint; `/sales` riwayat paginated (per_page 15) + modal detail + reprint dengan alasan wajib.
+- [x] **Shift X/Z** (`/shift`): pilih terminal & kas awal saat buka shift, X-report live, tutup shift dengan preview variance + alasan wajib, Z-report sebagai bukti audit.
+- [x] **Retur & refund** (`/returns`): lookup struk, pengajuan per-line (kuantitas + disposisi `restockable`/`damaged`) + alasan override, approval/reject/complete-refund untuk supervisor, `complete` di-guard terhadap shift tutup dan memakai `Idempotency-Key`.
+- [x] **Laporan & ekspor** (`/reports`, guard owner|manager): 6 tab (sales/top-products/stock/shift-differences/receiving/returns), rentang tanggal from-to, antrean ekspor XLSX/PDF dengan unduhan via `exportApi.downloadUrl(id)`.
+- [x] **Audit log** (`/audit`, guard owner|manager): paginated (per_page 20), filter `log_name`, modal detail viewer JSON `properties`.
+- [x] **Konvensi UI**: mata uang integer IDR (`Math.round` + `Intl.NumberFormat('id-ID')`, zona `Asia/Makassar`), target sentuh ≥44px (`touch-target`), label Indonesia, kasir tidak pernah melihat field harga modal/margin.
+- [x] **Verifikasi**: `tsc --noEmit` (0 error), `eslint .` (0 error/0 warning), `next build` sukses (10 rute statis + 1 dinamis `/receipt/[id]`). Smoke test live (podman-compose + `next dev` port 3001): CSRF → login owner → `/auth/me` → products → shifts/current → audit-events → exports → `GET /pos` semuanya `200 OK` dengan cookie sesi via proxy rewrite Next.js.
+- [ ] **Gap backend**: `GET /api/v1/terminals` belum ada; `lib/api/shift.ts` sementara memakai daftar terminal fallback sesuai `TerminalSeeder` (POS-01, POS-02). Rencana penambahan endpoint pada fase perbaikan berikutnya.
 
 ### B. Fase 4 Backend — Laporan, Ekspor, & Audit Endpoint (Selesai)
 - [x] **Laporan penjualan**: Net Sales tanpa pajak, PPN terkumpul, HPP (COGS), laba kotor estimasi. Harga modal tidak pernah dikirim ke kasir.
@@ -186,7 +186,9 @@ Slice berikutnya (lihat Bagian 4) beralih ke Frontend kasir/retur serta antarmuk
    - Berkas baru: `backend/app/Services/{Report,Export}Service.php`, `backend/app/Support/{ReportDateRange.php,Export/{SpreadsheetEscaper,XlsxWriter,PdfWriter}.php}`, `backend/app/Jobs/GenerateExportJob.php`, `backend/app/Http/Controllers/Api/{Report,Export,AuditEvent}Controller.php`. Test: `backend/tests/Feature/ReportAndExportApiTest.php`. OpenAPI: `docs/api/openapi-phase4.yaml` (mirror ke `backend/docs/`).
    - Verifikasi sebelum commit: `podman run ... php artisan test` (146 test / 767 assertion harus lulus).
    - Verifikasi lintas database sebelum commit: jalankan MySQL 8.4 terpisah (contoh port 3307), lalu `DB_HOST=127.0.0.1 DB_PORT=3307 DB_DATABASE=smoke_test DB_USERNAME=smoke_user DB_PASSWORD=smoke_pass php artisan test --configuration phpunit.mysql.xml` (146 test / 767 assertion harus lulus).
-4. **Beralih ke Frontend (Fase 3 frontend)**:
-   - Pindah ke `git checkout fase/frontend` (sudah ada setup `2a8f78a`).
-   - Bangun antarmuka kasir/retur serta layar laporan/ekspor sesuai Bagian 4A/4B.
+4. **Frontend (Fase 3 frontend) — sudah selesai** (commit `6f1dffd`):
+   - Halaman: `/pos`, `/receipt/[id]`, `/sales`, `/shift`, `/returns`, `/reports`, `/audit`, `/login`.
+   - Lib: `lib/api.ts` (Sanctum CSRF single-flight, session cookie, idempotency UUID), `lib/api/{auth,pos,sales,shift,returns,reports,terminals,audit-events}.ts`, `lib/types.ts`, `lib/auth-context.tsx`.
+   - Verifikasi: `tsc --noEmit`, `eslint .`, `next build` (semuanya lulus), smoke test live melalui podman-compose.
+   - **Gap backend terbuka**: tambahkan `GET /api/v1/terminals` dan hapus fallback hardcoded di `lib/api/shift.ts`.
 5. **Selesai semua**: masuk Fase 5 (UAT, backup/restore, beban, audit keamanan) di Bagian 4C.
