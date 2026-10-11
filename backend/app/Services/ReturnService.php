@@ -350,6 +350,23 @@ class ReturnService
     }
 
     /**
+     * Kunci baris kontrol inventaris singleton untuk serialisasi transaksi.
+     * Berbeda dengan StocktakeService yang membuat baris saat stocktake
+     * dimulai, refund dapat diproses sebelum stocktake pertama. Tanpa baris
+     * kontrol, firstOrFail() gagal dengan 404 dan refund tidak dapat
+     * diselesaikan. Pola firstOrCreate menjaga serialisasi transaksi dan
+     * membuat baris singleton bila belum ada.
+     */
+    protected function lockOrCreateInventoryControl(): void
+    {
+        $control = InventoryControl::lockForUpdate()->first();
+        if (!$control) {
+            $control = InventoryControl::create(['active_stocktake_id' => null]);
+            InventoryControl::lockForUpdate()->find($control->id);
+        }
+    }
+
+    /**
      * Complete an approved return with its refund, atomically and once
      * (FR-RET-03). Idempotent by (user, 'refund-complete', key).
      *
@@ -374,7 +391,7 @@ class ReturnService
             'non_cash_confirmed' => $nonCashConfirmed,
         ];
         return DB::transaction(function () use ($user, $request, $shiftId, $confirmedCashAmount, $refundReference, $idempotencyKey, $canonicalPayload) {
-            InventoryControl::lockForUpdate()->firstOrFail();
+            $this->lockOrCreateInventoryControl();
 
             return $this->idempotencyService->execute(
                 $user->id,
@@ -402,7 +419,7 @@ class ReturnService
     ): array {
         // Retry on deadlock / lock wait timeout (MySQL 1213 / 1205).
         return DB::transaction(function () use ($user, $request, $shiftId, $confirmedCashAmount, $refundReference, $nonCashConfirmed) {
-            InventoryControl::lockForUpdate()->firstOrFail();
+            $this->lockOrCreateInventoryControl();
             $this->stockService->checkInventoryGuard();
             $shift = Shift::whereKey($shiftId)->lockForUpdate()->first();
             $user = User::findOrFail($user->id);
