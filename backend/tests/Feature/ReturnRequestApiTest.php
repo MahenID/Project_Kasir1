@@ -124,7 +124,11 @@ class ReturnRequestApiTest extends TestCase
         $key = (string) Str::uuid();
         $response = $this->actingAs($this->cashier)->withHeader('Idempotency-Key', $key)->postJson("/api/v1/return-requests/{$id}/complete", $this->completion(3333))->assertOk();
         $retry = $this->postJson("/api/v1/return-requests/{$id}/complete", $this->completion(3333))->assertOk();
-        $this->assertSame($response->json('data'), $retry->json('data'));
+        $this->assertSame(
+            self::canonicalize($response->json('data')),
+            self::canonicalize($retry->json('data')),
+            'Retry idempoten harus mengembalikan data yang sama secara semantik (urutan key JSON tidak material).'
+        );
         $this->postJson("/api/v1/return-requests/{$id}/complete", $this->completion(3334))->assertStatus(409);
         $otherId = $this->createRequest();
         $this->approve($otherId);
@@ -182,5 +186,30 @@ class ReturnRequestApiTest extends TestCase
         $this->withHeader('Idempotency-Key', (string) Str::uuid())->postJson("/api/v1/return-requests/{$id}/complete", $payload + ['non_cash_confirmed' => true])->assertOk()->assertJsonPath('data.refund.method', 'qris');
         $this->assertDatabaseCount('refunds', 1);
         $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    /**
+     * Kanonikalisasi array asosiatif secara rekursif untuk membandingkan struktur
+     * JSON yang setara secara semantik (urutan key tidak material karena objek
+     * JSON tidak berurutan). Kolom JSON MySQL menormalisasi urutan kunci saat
+     * menyimpan dan membacanya kembali, sehingga respons idempoten replay
+     * (yang dipulihkan dari response_snapshot) akan memiliki urutan key yang
+     * berbeda dari respons eksekusi pertama walau isinya identik.
+     *
+     * @param mixed $value
+     * @return mixed
+     */
+    protected static function canonicalize(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_keys($value) !== range(0, count($value) - 1)) {
+            ksort($value);
+        }
+        foreach ($value as $key => $v) {
+            $value[$key] = self::canonicalize($v);
+        }
+        return $value;
     }
 }

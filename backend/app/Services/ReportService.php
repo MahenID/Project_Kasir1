@@ -245,7 +245,7 @@ class ReportService
             ->orderBy('stock')
             ->orderBy('id')
             ->limit($limit)
-            ->get(['id', 'sku', 'name', 'unit', 'stock', 'average_cost', 'minimum_stock', 'is_active']);
+            ->get(['id', 'sku', 'name', 'unit', 'stock', 'average_cost', 'min_stock', 'is_active']);
 
         $items = [];
         $totalValueMicros = 0;
@@ -262,8 +262,8 @@ class ReportService
                 'quantity_on_hand' => $qty,
                 'average_cost' => $this->microsToDecimalString($costMicros),
                 'inventory_value' => $this->fromMicrosToInt($valueMicros),
-                'minimum_stock' => (int) $product->minimum_stock,
-                'is_low_stock' => $qty <= (int) $product->minimum_stock,
+                'minimum_stock' => (int) $product->min_stock,
+                'is_low_stock' => $qty <= (int) $product->min_stock,
                 'is_active' => (bool) $product->is_active,
             ];
         }

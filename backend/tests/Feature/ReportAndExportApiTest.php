@@ -73,7 +73,7 @@ class ReportAndExportApiTest extends TestCase
             'selling_price' => 10000,
             'average_cost' => '6000.000000',
             'stock' => 20,
-            'minimum_stock' => 5,
+            'min_stock' => 5,
             'is_active' => true,
         ]);
 
