@@ -444,6 +444,64 @@ export interface ReceivingReportRow {
   total_cost?: number; // owner/manager only
 }
 
+// ---------- Dokumen Penerimaan Barang (Receivings) ----------
+export type ReceivingType = "purchase" | "opening";
+export type ReceivingStatus = "draft" | "approved" | "posted" | "cancelled";
+
+export interface ReceivingItemDetail {
+  id: number;
+  product_id: number;
+  product_name?: string;
+  product_sku?: string;
+  quantity: number;
+  unit_cost: number;
+  extended_cost: number;
+}
+
+export interface ReceivingDetail {
+  id: number;
+  receiving_number: string;
+  type: ReceivingType;
+  status: ReceivingStatus;
+  supplier_id: number | null;
+  supplier: {
+    id: number;
+    code: string;
+    name: string;
+  } | null;
+  external_reference: string | null;
+  received_at: string | null;
+  created_by: {
+    id: number | null;
+    name: string | null;
+  };
+  posted_by: {
+    id: number | null;
+    name: string | null;
+  } | null;
+  correction_notes: string | null;
+  items: ReceivingItemDetail[];
+  totals: {
+    total_quantity: number;
+    total_extended_cost: number;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReceivingRow {
+  id: number;
+  receiving_number: string;
+  type: ReceivingType;
+  status: ReceivingStatus;
+  supplier_id: number | null;
+  supplier_name: string | null;
+  external_reference: string | null;
+  received_at: string | null;
+  created_by: string | null;
+  created_at: string | null;
+}
+
 export interface ReturnsReportRow {
   return_id: number;
   return_number: string;
