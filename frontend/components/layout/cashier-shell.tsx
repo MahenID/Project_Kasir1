@@ -1,9 +1,10 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { type ReactNode } from "react";
-import type { User } from "@/lib/types";
+import { type ReactNode, useEffect, useState } from "react";
+import type { StocktakeDetail, User } from "@/lib/types";
 import { authApi } from "@/lib/api/auth";
+import { stocktakesApi } from "@/lib/api/stocktakes";
 
 interface CashierShellProps {
   user: User;
@@ -24,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/products", label: "Katalog Produk", supervisorOnly: true },
   { href: "/categories", label: "Kategori", supervisorOnly: true },
   { href: "/receivings", label: "Penerimaan Stok", supervisorOnly: true },
+  { href: "/stocktake", label: "Opname Stok", supervisorOnly: true },
   { href: "/suppliers", label: "Supplier", supervisorOnly: true },
   { href: "/customers", label: "Pelanggan" },
   { href: "/reports", label: "Laporan & Ekspor", supervisorOnly: true },
@@ -33,6 +35,24 @@ const NAV_ITEMS: NavItem[] = [
 export function CashierShell({ user, children }: CashierShellProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [activeStocktake, setActiveStocktake] = useState<StocktakeDetail | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    stocktakesApi
+      .active()
+      .then((data) => {
+        if (isMounted) {
+          setActiveStocktake(data);
+        }
+      })
+      .catch(() => {
+        // Abaikan jika unauthenticated atau role tidak diizinkan
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname]);
 
   const isSupervisor =
     user.roles.includes("owner") || user.roles.includes("manager");
@@ -125,6 +145,28 @@ export function CashierShell({ user, children }: CashierShellProps) {
           );
         })}
       </nav>
+
+      {/* Banner Peringatan Freeze Toko jika Stocktake sedang aktif */}
+      {activeStocktake && (
+        <aside
+          aria-label="Peringatan Status Audit Stok"
+          className="flex shrink-0 items-center justify-between border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-900"
+        >
+          <div className="flex items-center gap-2">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-amber-600 animate-ping" />
+            <span>
+              AUDIT STOK FISIK AKTIF ({activeStocktake.stocktake_number}): Toko dalam jeda audit. Transaksi kasir dan pergerakan stok dibekukan sampai opname selesai.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push("/stocktake")}
+            className="rounded bg-amber-600 px-2 py-1 text-white hover:bg-amber-700 font-medium transition-colors"
+          >
+            Buka Halaman Opname &rarr;
+          </button>
+        </aside>
+      )}
 
       {/* Konten Halaman */}
       <main className="flex-1 overflow-hidden">{children}</main>

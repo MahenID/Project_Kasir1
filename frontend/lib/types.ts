@@ -502,6 +502,60 @@ export interface ReceivingRow {
   created_at: string | null;
 }
 
+// ---------- Stocktake (Audit Stok Fisik) ----------
+export type StocktakeStatus = "counting" | "posted" | "cancelled";
+
+export interface StocktakeItem {
+  id: number;
+  product_id: number;
+  product_name: string | null;
+  product_sku: string | null;
+  snapshot_stock: number;
+  snapshot_average_cost: number;
+  counted_stock: number | null;
+  difference: number | null;
+}
+
+export interface StocktakeSummary {
+  total_products: number;
+  counted: number;
+  with_difference: number;
+  net_difference: number;
+}
+
+export interface StocktakeDetail {
+  id: number;
+  stocktake_number: string;
+  status: StocktakeStatus;
+  notes: string | null;
+  started_by: {
+    id: number | null;
+    name: string | null;
+  } | null;
+  started_at: string | null;
+  posted_by: {
+    id: number | null;
+    name: string | null;
+  } | null;
+  posted_at: string | null;
+  cancelled_at: string | null;
+  items: StocktakeItem[];
+  summary: StocktakeSummary;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface StocktakeRow {
+  id: number;
+  stocktake_number: string;
+  status: StocktakeStatus;
+  started_by: string | null;
+  started_at: string | null;
+  posted_by: string | null;
+  posted_at: string | null;
+  cancelled_at: string | null;
+}
+
 export interface ReturnsReportRow {
   return_id: number;
   return_number: string;
