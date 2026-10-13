@@ -23,6 +23,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/shift", label: "Shift & Kas" },
   { href: "/products", label: "Katalog Produk", supervisorOnly: true },
   { href: "/categories", label: "Kategori", supervisorOnly: true },
+  { href: "/suppliers", label: "Supplier", supervisorOnly: true },
+  { href: "/customers", label: "Pelanggan" },
   { href: "/reports", label: "Laporan & Ekspor", supervisorOnly: true },
   { href: "/audit", label: "Audit Log", supervisorOnly: true },
 ];

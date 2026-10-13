@@ -71,7 +71,7 @@ export default function ProductsPage() {
       .catch(() => {});
     supplierApi
       .list({ active_only: true })
-      .then(setSuppliers)
+      .then((res) => setSuppliers(res.data))
       .catch(() => {});
   }, [isSupervisor]);
 

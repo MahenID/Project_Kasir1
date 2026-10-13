@@ -513,14 +513,24 @@ export interface Customer {
   code: string;
   name: string;
   phone: string | null;
+  email?: string | null;
+  address?: string | null;
   is_active: boolean;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
 }
 
 export interface Supplier {
   id: number;
   code: string;
   name: string;
+  contact_person?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
   is_active: boolean;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
 }
 
 export interface ProductDetail {
