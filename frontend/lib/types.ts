@@ -390,58 +390,128 @@ export interface CompleteReturnRequest {
 
 // ---------- Laporan ----------
 export interface SalesReport {
-  from: string;
-  to: string;
-  gross_sales: number;
-  total_discount: number;
-  total_tax: number;
-  net_sales: number;
-  cogs: number;
-  gross_profit: number;
-  transaction_count: number;
-  average_transaction: number;
+  period: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  currency: string;
+  gross_profit_is_estimate: boolean;
+  net_sales_excluding_tax: number;
+  gross_sales_net_amount: number;
+  return_net_amount: number;
+  net_tax_collected: number;
+  tax_collected: number;
+  tax_refunded: number;
+  net_cogs: number;
+  estimated_gross_profit: number;
+  completed_sale_count: number;
+  average_transaction_value: number;
+  gross_transaction_total: number;
+  payments: {
+    collected: Record<string, number>;
+    refunded: Record<string, number>;
+    net: Record<string, number>;
+    total_collected: number;
+    total_refunded: number;
+    total_net: number;
+  };
 }
 
-export interface TopProductRow {
+export interface TopProductItem {
+  rank: number;
   product_id: number;
   sku: string;
   name: string;
-  quantity_sold: number;
-  revenue: number;
-  gross_profit?: number; // hanya owner/manager
+  sold_units: number;
+  returned_units: number;
+  net_product_units: number;
+  net_sales_value: number;
 }
 
-export interface StockReportRow {
+export interface TopProductsReport {
+  period: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  sort: "units" | "value";
+  items: TopProductItem[];
+}
+
+export interface StockReportItem {
   product_id: number;
   sku: string;
   name: string;
   unit: string;
-  stock: number;
-  min_stock: number;
-  stock_value?: number; // hanya owner/manager (average_cost * stock)
+  quantity_on_hand: number;
+  average_cost: string;
+  inventory_value: number;
+  minimum_stock: number;
+  is_low_stock: boolean;
+  is_active: boolean;
 }
 
-export interface ShiftDifferenceRow {
+export interface StockReport {
+  total_products: number;
+  returned_rows: number;
+  total_inventory_value: number;
+  valuation_basis: string;
+  items: StockReportItem[];
+}
+
+export interface ShiftDifferenceItem {
   shift_id: number;
   shift_number: string;
-  cashier_name: string;
-  terminal_code: string;
-  opened_at: ISODateString;
-  closed_at: ISODateString | null;
+  cashier: string | null;
+  terminal: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  starting_cash: number;
   expected_cash: number;
-  actual_cash: number | null;
-  difference: number | null;
-  explanation: string | null;
+  actual_cash: number;
+  difference: number;
+  has_explanation: boolean;
+  review_status: string;
 }
 
-export interface ReceivingReportRow {
-  receiving_id: number;
-  receiving_number: string;
-  supplier_name: string;
-  posted_at: ISODateString | null;
-  line_count: number;
+export interface ShiftDifferencesReport {
+  period: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  closed_shift_count: number;
+  total_difference: number;
+  over_count: number;
+  short_count: number;
+  balanced_count: number;
+  items: ShiftDifferenceItem[];
+}
+
+export interface ReceivingReport {
+  period: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  posted_document_count: number;
   total_quantity: number;
-  total_cost?: number; // owner/manager only
+  total_cost: number;
+}
+
+export interface ReturnsReport {
+  period: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  completed_return_count: number;
+  total_returned_units: number;
+  restockable_units: number;
+  damaged_units: number;
+  total_refund_amount: number;
+  refunds_by_method: Record<string, number>;
 }
 
 // ---------- Dokumen Penerimaan Barang (Receivings) ----------
@@ -618,29 +688,35 @@ export interface ReturnsReportRow {
 
 // ---------- Ekspor ----------
 export type ExportFormat = "xlsx" | "pdf";
-export type ExportType =
+export type ExportReportType =
   | "sales"
   | "top-products"
   | "stock"
-  | "shift-differences"
   | "receiving"
-  | "returns";
+  | "returns"
+  | "shift-differences";
 
-export type ExportStatus = "queued" | "processing" | "completed" | "failed";
+export type ExportStatus = "pending" | "processing" | "completed" | "failed";
 
 export interface ExportJob {
   id: number;
-  type: ExportType;
-  format: ExportFormat;
+  report_type: ExportReportType;
+  filters?: {
+    report_type?: string;
+    format?: string;
+    start_date?: string;
+    end_date?: string;
+    timezone?: string;
+    sort?: string;
+    [key: string]: unknown;
+  } | null;
   status: ExportStatus;
-  filters: Record<string, unknown>;
-  artifact_name: string | null;
-  artifact_size_bytes: number | null;
-  error_message: string | null;
-  requested_by_name: string;
-  created_at: ISODateString;
-  completed_at: ISODateString | null;
-  expires_at: ISODateString | null;
+  row_count?: number | null;
+  failure_code?: string | null;
+  error_message?: string | null;
+  download_url?: string;
+  expires_at?: string | null;
+  created_at?: string;
 }
 
 // ---------- Audit ----------
