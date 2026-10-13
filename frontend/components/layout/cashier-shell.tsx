@@ -21,6 +21,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/sales", label: "Riwayat Transaksi" },
   { href: "/returns", label: "Retur & Refund" },
   { href: "/shift", label: "Shift & Kas" },
+  { href: "/products", label: "Katalog Produk", supervisorOnly: true },
+  { href: "/categories", label: "Kategori", supervisorOnly: true },
   { href: "/reports", label: "Laporan & Ekspor", supervisorOnly: true },
   { href: "/audit", label: "Audit Log", supervisorOnly: true },
 ];

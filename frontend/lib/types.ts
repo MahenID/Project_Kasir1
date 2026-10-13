@@ -497,11 +497,15 @@ export interface AuditEvent {
   created_at: ISODateString;
 }
 
-// ---------- Master data ringkas ----------
+// ---------- Master data ringkas & detail ----------
 export interface Category {
   id: number;
   name: string;
+  slug?: string;
   is_active: boolean;
+  products_count?: number;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
 }
 
 export interface Customer {
@@ -517,4 +521,33 @@ export interface Supplier {
   code: string;
   name: string;
   is_active: boolean;
+}
+
+export interface ProductDetail {
+  id: number;
+  sku: string;
+  barcode: string | null;
+  name: string;
+  description: string | null;
+  unit: string;
+  selling_price: number; // integer rupiah
+  stock: number;
+  min_stock: number;
+  is_active: boolean;
+  is_low_stock: boolean;
+  image_url: string | null;
+  category: {
+    id: number;
+    name: string;
+    slug: string;
+  } | null;
+  preferred_supplier: {
+    id: number;
+    code: string;
+    name: string;
+  } | null;
+  average_cost?: string; // hanya untuk owner/manager
+  commercial_version?: number;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
 }

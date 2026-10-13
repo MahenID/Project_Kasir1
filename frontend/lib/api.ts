@@ -117,10 +117,12 @@ export async function apiRequest<T>(
     await ensureCsrf();
   }
 
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
-  if (options.body !== undefined) {
+  if (options.body !== undefined && !isFormData) {
     headers["Content-Type"] = "application/json";
   }
   const xsrf = readCookie("XSRF-TOKEN");
@@ -137,7 +139,11 @@ export async function apiRequest<T>(
       method,
       credentials: "include",
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: isFormData
+        ? (options.body as FormData)
+        : options.body !== undefined
+        ? JSON.stringify(options.body)
+        : undefined,
       signal: options.signal,
     });
   } catch {
@@ -179,9 +185,10 @@ export async function apiRequestWithMeta<T>(
   if (MUTATING.has(method)) {
     await ensureCsrf();
   }
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   // Gunakan fetch langsung agar meta tetap tersedia.
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   const xsrf = readCookie("XSRF-TOKEN");
   if (xsrf) headers["X-XSRF-TOKEN"] = decodeURIComponent(xsrf);
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
@@ -190,7 +197,11 @@ export async function apiRequestWithMeta<T>(
     method,
     credentials: "include",
     headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: isFormData
+      ? (options.body as FormData)
+      : options.body !== undefined
+      ? JSON.stringify(options.body)
+      : undefined,
     signal: options.signal,
   });
 
