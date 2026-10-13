@@ -556,6 +556,55 @@ export interface StocktakeRow {
   cancelled_at: string | null;
 }
 
+// ---------- Penyesuaian Stok & Revaluasi HPP ----------
+export type InventoryAdjustmentType = "quantity" | "revaluation";
+export type InventoryAdjustmentStatus = "draft" | "posted" | "cancelled";
+
+export interface InventoryAdjustmentItem {
+  id: number;
+  product_id: number;
+  product_name: string | null;
+  product_sku: string | null;
+  before_stock: number;
+  after_stock: number;
+  quantity_delta?: number;
+  current_average_cost?: number;
+  new_average_cost?: number;
+}
+
+export interface InventoryAdjustmentDetail {
+  id: number;
+  adjustment_number: string;
+  type: InventoryAdjustmentType;
+  status: InventoryAdjustmentStatus;
+  reason: string;
+  evidence_reference: string | null;
+  created_by: {
+    id: number | null;
+    name: string | null;
+  } | null;
+  posted_by: {
+    id: number | null;
+    name: string | null;
+  } | null;
+  posted_at: string | null;
+  items: InventoryAdjustmentItem[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface InventoryAdjustmentRow {
+  id: number;
+  adjustment_number: string;
+  type: InventoryAdjustmentType;
+  status: InventoryAdjustmentStatus;
+  reason: string;
+  evidence_reference: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  posted_at: string | null;
+}
+
 export interface ReturnsReportRow {
   return_id: number;
   return_number: string;

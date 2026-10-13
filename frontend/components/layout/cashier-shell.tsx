@@ -26,6 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/categories", label: "Kategori", supervisorOnly: true },
   { href: "/receivings", label: "Penerimaan Stok", supervisorOnly: true },
   { href: "/stocktake", label: "Opname Stok", supervisorOnly: true },
+  { href: "/adjustments", label: "Penyesuaian Stok", supervisorOnly: true },
   { href: "/suppliers", label: "Supplier", supervisorOnly: true },
   { href: "/customers", label: "Pelanggan" },
   { href: "/reports", label: "Laporan & Ekspor", supervisorOnly: true },
